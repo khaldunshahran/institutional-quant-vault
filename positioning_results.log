@@ -1,0 +1,217 @@
+--- Positioning Filter Backtest ---
+Start: 2026-08-23 00:00:00+00:00
+End: 2026-09-21 00:00:00+00:00
+Symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'TRXUSDT', 'LINKUSDT', 'DOTUSDT', 'MATICUSDT', 'LTCUSDT', 'BCHUSDT', 'SHIBUSDT', 'UNIUSDT', 'NEARUSDT', 'ATOMUSDT', 'XLMUSDT', 'APTUSDT']
+----------------------------------------
+
+Processing BTCUSDT...
+  Obtained 500 30m periods.
+
+Processing ETHUSDT...
+  Obtained 500 30m periods.
+
+Processing SOLUSDT...
+  Obtained 500 30m periods.
+
+Processing BNBUSDT...
+  Obtained 500 30m periods.
+
+Processing XRPUSDT...
+  Obtained 500 30m periods.
+
+Processing DOGEUSDT...
+  Obtained 500 30m periods.
+
+Processing ADAUSDT...
+  Obtained 500 30m periods.
+
+Processing AVAXUSDT...
+  Obtained 500 30m periods.
+
+Processing TRXUSDT...
+  Obtained 500 30m periods.
+
+Processing LINKUSDT...
+  Obtained 500 30m periods.
+
+Processing DOTUSDT...
+  Obtained 500 30m periods.
+
+Processing MATICUSDT...
+  No data for MATICUSDT. Skipping.
+
+Processing LTCUSDT...
+  Obtained 500 30m periods.
+
+Processing BCHUSDT...
+  Obtained 500 30m periods.
+
+Processing SHIBUSDT...
+  No data for SHIBUSDT. Skipping.
+
+Processing UNIUSDT...
+  Obtained 500 30m periods.
+
+Processing NEARUSDT...
+  Obtained 500 30m periods.
+
+Processing ATOMUSDT...
+  Obtained 500 30m periods.
+
+Processing XLMUSDT...
+  Obtained 500 30m periods.
+
+Processing APTUSDT...
+  Obtained 500 30m periods.
+
+==================================================
+AGGREGATE DECILE REPORT (Gross and Net)
+==================================================
+
+topPosition_1H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      0.0837% |   -0.0563% |   +
+    2  |      0.0450% |   -0.0950% |   +
+    3  |      0.0463% |   -0.0937% |   +
+    4  |      0.0758% |   -0.0642% |   +
+    5  |      0.0538% |   -0.0862% |   +
+    6  |      0.0241% |   -0.1159% |   +
+    7  |      0.0401% |   -0.0999% |   +
+    8  |      0.0650% |   -0.0750% |   +
+    9  |      0.0886% |   -0.0514% |   +
+   10  |      0.0896% |   -0.0504% |   +
+
+topPosition_4H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      0.4328% |    0.2928% |   +
+    2  |      0.2056% |    0.0656% |   +
+    3  |      0.0530% |   -0.0870% |   +
+    4  |      0.2471% |    0.1071% |   +
+    5  |      0.1579% |    0.0179% |   +
+    6  |      0.1624% |    0.0224% |   +
+    7  |      0.2106% |    0.0706% |   +
+    8  |      0.3123% |    0.1723% |   +
+    9  |      0.2431% |    0.1031% |   +
+   10  |      0.3215% |    0.1815% |   +
+
+topPosition_24H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      1.9278% |    1.7878% |   +
+    2  |      1.0898% |    0.9498% |   +
+    3  |      0.1745% |    0.0345% |   +
+    4  |      1.6983% |    1.5583% |   +
+    5  |      0.7012% |    0.5612% |   +
+    6  |      1.5155% |    1.3755% |   +
+    7  |      1.5455% |    1.4055% |   +
+    8  |      1.5823% |    1.4423% |   +
+    9  |      1.5966% |    1.4566% |   +
+   10  |      1.0422% |    0.9022% |   +
+
+topAccount_1H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      0.0885% |   -0.0515% |   +
+    2  |      0.1015% |   -0.0385% |   +
+    3  |      0.1032% |   -0.0368% |   +
+    4  |      0.0928% |   -0.0472% |   +
+    5  |      0.1038% |   -0.0362% |   +
+    6  |      0.0232% |   -0.1168% |   +
+    7  |      0.0356% |   -0.1044% |   +
+    8  |      0.0346% |   -0.1054% |   +
+    9  |      0.0134% |   -0.1266% |   +
+   10  |      0.0154% |   -0.1246% |   +
+
+topAccount_4H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      0.3755% |    0.2355% |   +
+    2  |      0.4047% |    0.2647% |   +
+    3  |      0.4698% |    0.3298% |   +
+    4  |      0.3406% |    0.2006% |   +
+    5  |      0.3765% |    0.2365% |   +
+    6  |      0.1960% |    0.0560% |   +
+    7  |      0.0385% |   -0.1015% |   +
+    8  |      0.1334% |   -0.0066% |   +
+    9  |     -0.0183% |   -0.1583% |   -
+   10  |      0.0388% |   -0.1012% |   +
+
+topAccount_24H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      1.4061% |    1.2661% |   +
+    2  |      2.6742% |    2.5342% |   +
+    3  |      1.9869% |    1.8469% |   +
+    4  |      1.1425% |    1.0025% |   +
+    5  |      1.2835% |    1.1435% |   +
+    6  |      0.9958% |    0.8558% |   +
+    7  |      0.9078% |    0.7678% |   +
+    8  |      1.6057% |    1.4657% |   +
+    9  |      0.1666% |    0.0266% |   +
+   10  |      0.6708% |    0.5308% |   +
+
+globalAccount_1H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      0.1034% |   -0.0366% |   +
+    2  |      0.1147% |   -0.0253% |   +
+    3  |      0.0357% |   -0.1043% |   +
+    4  |      0.1050% |   -0.0350% |   +
+    5  |      0.0738% |   -0.0662% |   +
+    6  |      0.0412% |   -0.0988% |   +
+    7  |      0.0659% |   -0.0741% |   +
+    8  |      0.0716% |   -0.0684% |   +
+    9  |      0.0260% |   -0.1140% |   +
+   10  |     -0.0212% |   -0.1612% |   -
+
+globalAccount_4H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      0.3910% |    0.2510% |   +
+    2  |      0.4873% |    0.3473% |   +
+    3  |      0.2613% |    0.1213% |   +
+    4  |      0.3276% |    0.1876% |   +
+    5  |      0.2897% |    0.1497% |   +
+    6  |      0.1427% |    0.0027% |   +
+    7  |      0.2509% |    0.1109% |   +
+    8  |      0.2639% |    0.1239% |   +
+    9  |      0.0140% |   -0.1260% |   +
+   10  |     -0.0806% |   -0.2206% |   -
+
+globalAccount_24H:
+Decile | Gross Mean % | Net Mean % | Sign Edge
+    1  |      2.1480% |    2.0080% |   +
+    2  |      1.9746% |    1.8346% |   +
+    3  |      1.2382% |    1.0982% |   +
+    4  |      1.8109% |    1.6709% |   +
+    5  |      0.7397% |    0.5997% |   +
+    6  |      1.4057% |    1.2657% |   +
+    7  |      1.5781% |    1.4381% |   +
+    8  |      1.4982% |    1.3582% |   +
+    9  |      0.3795% |    0.2395% |   +
+   10  |      0.0861% |   -0.0539% |   +
+
+==================================================
+DIVERGENCE REPORT (4H Forward Gross Mean)
+==================================================
+BTCUSDT    | OI+Px+ :  0.0761% (n=119) | OI+Px- :  0.1350% (n=119)
+ETHUSDT    | OI+Px+ :  0.2039% (n=120) | OI+Px- :  0.0306% (n=128)
+SOLUSDT    | OI+Px+ :  0.3607% (n=122) | OI+Px- :  0.1271% (n=122)
+BNBUSDT    | OI+Px+ :  0.1695% (n=128) | OI+Px- :  0.1441% (n=130)
+XRPUSDT    | OI+Px+ :  0.1228% (n=130) | OI+Px- :  0.1993% (n=126)
+DOGEUSDT   | OI+Px+ :  0.1100% (n=132) | OI+Px- :  0.0541% (n=132)
+ADAUSDT    | OI+Px+ :  0.2182% (n=120) | OI+Px- :  0.0853% (n=114)
+AVAXUSDT   | OI+Px+ :  0.4517% (n=122) | OI+Px- :  0.8321% (n=135)
+TRXUSDT    | OI+Px+ :  0.0877% (n=123) | OI+Px- :  0.0630% (n=120)
+LINKUSDT   | OI+Px+ :  0.2745% (n=118) | OI+Px- :  0.2370% (n=125)
+DOTUSDT    | OI+Px+ : -0.1871% (n=118) | OI+Px- :  0.1426% (n=123)
+LTCUSDT    | OI+Px+ :  0.2199% (n=116) | OI+Px- :  0.1950% (n=124)
+BCHUSDT    | OI+Px+ :  0.0410% (n=122) | OI+Px- :  0.2623% (n=126)
+UNIUSDT    | OI+Px+ :  0.4920% (n=122) | OI+Px- :  0.5863% (n=133)
+NEARUSDT   | OI+Px+ :  0.9814% (n=133) | OI+Px- :  0.9722% (n=123)
+ATOMUSDT   | OI+Px+ :  0.0172% (n=112) | OI+Px- : -0.0846% (n=126)
+XLMUSDT    | OI+Px+ :  0.1791% (n=123) | OI+Px- :  0.3280% (n=131)
+APTUSDT    | OI+Px+ :  0.4852% (n=113) | OI+Px- :  0.1039% (n=128)
+
+==================================================
+VERDICT
+==================================================
+Primary Hypothesis (contrarian 4H on topPosition):
+  Decile 1 (Extreme Short) 4H Fwd Mean: 0.4328%
+  Decile 10 (Extreme Long) 4H Fwd Mean: 0.3215%
+
+FAIL: The data does not consistently support the contrarian hypothesis (edge is missing or inverted).
