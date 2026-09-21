@@ -49,9 +49,11 @@ runtime/telegram_outbox.json
 runtime/sentry_hourly_log.json
 runtime/pending_entries.json
 runtime/*.pid
+runtime/*cache*.json
 # Backups
 backups/
 *.bundle
+*.patch
 scratch/
 scratch_*.py
 

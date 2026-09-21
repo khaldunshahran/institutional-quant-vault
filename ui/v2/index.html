@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quant Terminal v2 — Paper Trading</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ PERMANENT HEADER ============ -->
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="badge badge-paper" id="mode-badge">PAPER MODE</span>
+    <span class="brand">Quant Terminal</span>
+    <a href="/" class="btn btn-ghost" style="text-decoration:none;font-size:11px;padding:3px 10px;margin-left:8px;" title="Switch to Classic Cockpit">Classic Cockpit</a>
+  </div>
+  <div class="topbar-metrics">
+    <div class="tm">
+      <span class="tm-label">Equity</span>
+      <span class="tm-value" id="hdr-equity">—</span>
+    </div>
+    <div class="tm">
+      <span class="tm-label">Day PnL / Target</span>
+      <span class="tm-value" id="hdr-daypnl">—</span>
+    </div>
+    <div class="tm">
+      <span class="tm-label">Positions</span>
+      <span class="tm-value" id="hdr-positions">—</span>
+    </div>
+    <div class="tm">
+      <span class="tm-label">Engine</span>
+      <span class="tm-value" id="hdr-engine">—</span>
+    </div>
+    <div class="tm tm-health">
+      <span class="tm-label">Data</span>
+      <span class="health-dot" id="hdr-health-dot" title="tick freshness"></span>
+      <span class="tm-value small" id="hdr-health-text">—</span>
+    </div>
+    <button class="btn btn-ghost" id="btn-autopilot" title="Start or stop the paper autopilot">Start paper autopilot</button>
+  </div>
+</header>
+
+<!-- ============ ERROR BANNER (hidden unless a fetch fails) ============ -->
+<div class="banner banner-error" id="error-banner" hidden>
+  <span id="error-banner-text">Data refresh failed.</span>
+</div>
+
+<!-- ============ TAB NAV ============ -->
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-tab="overview" role="tab">Overview</button>
+  <button class="tab" data-tab="positions" role="tab">Positions</button>
+  <button class="tab" data-tab="market" role="tab">Market</button>
+  <button class="tab" data-tab="lab" role="tab">Lab</button>
+  <button class="tab" data-tab="system" role="tab">System</button>
+</nav>
+
+<main class="main">
+
+  <!-- ============ TAB 1: OVERVIEW ============ -->
+  <section class="tabpage active" id="tab-overview">
+    <div class="card">
+      <div class="card-head">
+        <h2>Equity curve</h2>
+        <span class="updated" id="updated-overview">—</span>
+      </div>
+      <canvas id="equity-chart" height="260"></canvas>
+      <p class="caption">Account value over time, built from closed trades. The shaded red area shows how far the account fell below its previous peak (drawdown).</p>
+      <p class="empty" id="equity-empty" hidden>No closed trades yet — the equity curve will appear after the first trade closes.</p>
+    </div>
+
+    <div class="kpi-grid" id="kpi-grid">
+      <div class="card kpi"><span class="kpi-label">Net PnL</span><span class="kpi-value" id="kpi-netpnl">—</span><span class="kpi-sub" id="kpi-netpnl-sub">—</span></div>
+      <div class="card kpi"><span class="kpi-label">Win rate</span><span class="kpi-value" id="kpi-winrate">—</span><span class="kpi-sub" id="kpi-winrate-sub">—</span></div>
+      <div class="card kpi"><span class="kpi-label">Profit factor</span><span class="kpi-value" id="kpi-pf">—</span><span class="kpi-sub" id="kpi-pf-sub">—</span></div>
+      <div class="card kpi"><span class="kpi-label">Expectancy / trade</span><span class="kpi-value" id="kpi-expectancy">—</span><span class="kpi-sub">average profit per trade</span></div>
+      <div class="card kpi"><span class="kpi-label">Max drawdown</span><span class="kpi-value" id="kpi-dd">—</span><span class="kpi-sub" id="kpi-dd-sub">—</span></div>
+      <div class="card kpi"><span class="kpi-label">Trades / day</span><span class="kpi-value" id="kpi-tpd">—</span><span class="kpi-sub">average pace</span></div>
+      <div class="card kpi"><span class="kpi-label">Total trades</span><span class="kpi-value" id="kpi-total">—</span><span class="kpi-sub" id="kpi-total-sub">—</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Per-symbol performance</h2>
+        <span class="hint">sorted worst first</span>
+      </div>
+      <table class="table" id="symbol-table">
+        <thead><tr><th>Symbol</th><th class="num">Trades</th><th class="num">Net PnL</th><th class="num">Win rate</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty-row">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ TAB 2: POSITIONS ============ -->
+  <section class="tabpage" id="tab-positions">
+    <div class="card">
+      <div class="card-head">
+        <h2>Open positions</h2>
+        <span class="updated" id="updated-positions">—</span>
+      </div>
+      <table class="table" id="positions-table">
+        <thead><tr>
+          <th>Symbol</th><th>Side</th><th class="num">Entry</th><th class="num">Mark</th>
+          <th class="num">uPnL</th><th class="num">ROE</th><th>Time in trade</th>
+          <th class="num">Dist. to SL / TP</th><th class="num">Fees + funding</th><th></th>
+        </tr></thead>
+        <tbody><tr><td colspan="10" class="empty-row">Loading…</td></tr></tbody>
+      </table>
+      <p class="empty" id="positions-empty" hidden>No open positions right now.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Pending entries</h2></div>
+      <div class="chips" id="pending-chips"><span class="empty-row">Loading…</span></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 3: MARKET ============ -->
+  <section class="tabpage" id="tab-market">
+    <div class="card">
+      <div class="card-head">
+        <h2>Chart</h2>
+        <div class="controls">
+          <label class="ctl">Symbol
+            <select id="market-symbol"></select>
+          </label>
+          <label class="ctl">Interval
+            <select id="market-interval">
+              <option value="15m" selected>15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+            </select>
+          </label>
+          <span class="badge badge-frozen" id="market-frozen" title="The trading universe is frozen to these symbols only">Frozen universe</span>
+          <span class="updated" id="updated-market">—</span>
+        </div>
+      </div>
+      <canvas id="candle-chart" height="380"></canvas>
+      <p class="caption">Candles for the selected symbol. Triangles mark entries and circles mark exits from your closed trades (approximate). Dashed lines show stop-loss (red) and take-profit (green) for the open position, if any.</p>
+      <p class="empty" id="market-empty" hidden>No candle data available for this symbol right now.</p>
+    </div>
+  </section>
+
+  <!-- ============ TAB 4: LAB ============ -->
+  <section class="tabpage" id="tab-lab">
+    <div class="card-grid-2">
+      <div class="card">
+        <div class="card-head"><h2>Experiment integrity</h2><span class="updated" id="updated-integrity">—</span></div>
+        <div class="kv"><span>Universe</span><span class="badge" id="lab-frozen-badge">—</span></div>
+        <div class="chips" id="lab-symbols"><span class="empty-row">Loading…</span></div>
+        <div class="kv"><span>Ledger</span><span id="lab-ledger">—</span></div>
+        <div class="kv"><span>Closed trades in history</span><span id="lab-history">—</span></div>
+        <div class="kv"><span>Recent decisions sampled</span><span id="lab-dec-sampled">—</span></div>
+        <div class="kv"><span>Skipped</span><span id="lab-dec-skipped">—</span></div>
+        <div class="kv"><span>Telemetry degraded</span><span id="lab-dec-degraded">—</span></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Backtests</h2></div>
+        <p class="muted">Backtest summaries still live in the original dashboard's Backtest Lab, which is unchanged. This view stays focused on forward paper-trading results.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Decision log</h2><span class="updated" id="updated-decisions">—</span></div>
+      <table class="table" id="decisions-table">
+        <thead><tr><th>Time (UTC)</th><th>Symbol</th><th>Outcome</th><th>Reason</th></tr></thead>
+        <tbody><tr><td colspan="4" class="empty-row">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ TAB 5: SYSTEM ============ -->
+  <section class="tabpage" id="tab-system">
+    <div class="card-grid-2">
+      <div class="card">
+        <div class="card-head"><h2>Operations health</h2><span class="updated" id="updated-system">—</span></div>
+        <div class="kv"><span>Engine running</span><span id="sys-running">—</span></div>
+        <div class="kv"><span>Worker thread alive</span><span id="sys-thread">—</span></div>
+        <div class="kv"><span>Seconds since last tick</span><span id="sys-tick">—</span></div>
+        <div class="kv"><span>Price fetch failures</span><span id="sys-price-fail">—</span></div>
+        <div class="kv"><span>History write failures</span><span id="sys-hist-fail">—</span></div>
+        <div class="kv"><span>Execution mode</span><span id="sys-mode">—</span></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Risk configuration</h2></div>
+        <div class="kv"><span>Max daily allocation</span><span id="risk-alloc">—</span></div>
+        <div class="kv"><span>Daily profit target</span><span id="risk-target">—</span></div>
+        <div class="kv"><span>Leverage</span><span id="risk-lev">—</span></div>
+        <div class="kv"><span>Max concurrent positions</span><span id="risk-maxpos">—</span></div>
+        <div class="kv"><span>Notional per trade</span><span id="risk-notional">—</span></div>
+        <p class="muted">Configuration is read-only here. Edit the config files to change risk settings.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Logs</h2></div>
+      <pre class="logs" id="logs-pre">Loading…</pre>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>Paper trading only. No real money is at risk. Dashboard served on localhost.</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

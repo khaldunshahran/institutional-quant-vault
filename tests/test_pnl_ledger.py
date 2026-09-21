@@ -47,7 +47,7 @@ class PartialStubFillSimulator(StubFillSimulator):
 
 @pytest.fixture
 def ledger_trader(tmp_path):
-    trader = AutonomousMultiAssetTrader()
+    trader = AutonomousMultiAssetTrader(runtime_dir=str(tmp_path))
     trader.positions_file = tmp_path / "autonomous_positions.json"
     trader.history_file = tmp_path / "autonomous_trade_history.json"
     trader.state_file = tmp_path / "autonomous_state.json"

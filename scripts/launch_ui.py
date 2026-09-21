@@ -14,15 +14,26 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVER_SCRIPT = PROJECT_ROOT / "ui" / "server.py"
 PORT = 5000
-URL = f"http://localhost:{PORT}"
+URL = f"http://127.0.0.1:{PORT}"
+
+
+def get_python_exe():
+    venv_win = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+    venv_nix = PROJECT_ROOT / ".venv" / "bin" / "python"
+    if venv_win.exists():
+        return str(venv_win)
+    if venv_nix.exists():
+        return str(venv_nix)
+    return sys.executable
 
 
 def main():
-    python_exe = sys.executable
+    python_exe = get_python_exe()
     print("=" * 60)
     print("  STARTING BTC 5M POLYMARKET CHROME DASHBOARD")
     print("=" * 60)
     print(f"Server URL: {URL}")
+    print(f"Python:     {python_exe}")
     print("Starting background server and opening browser...\n")
 
     # Start server as subprocess

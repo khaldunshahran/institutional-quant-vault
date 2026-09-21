@@ -1,0 +1,13 @@
+{
+  "name": "institutional-quant-vault",
+  "version": "1.0.0",
+  "description": "Institutional Quant Vault & 5M Trading Cockpit",
+  "scripts": {
+    "dev": "python scripts/launch_ui.py",
+    "start": "python ui/server.py --port 5000",
+    "test": "python -m pytest tests/"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

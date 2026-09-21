@@ -1,1 +1,44 @@
-[]
+[
+  {
+    "trade_id": "quant_LTCUSDT_1789996591",
+    "timestamp": 1789999581.9132404,
+    "timestamp_utc": "2026-09-21 14:06:21 UTC",
+    "side": "LONG",
+    "entry_price": 63.5,
+    "exit_price": 61.7,
+    "realized_pnl": -290.2,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "metrics_provenance": "live",
+    "entry_metrics": {
+      "hurst": 0.63,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "UNKNOWN",
+      "robust_z": 8.73
+    },
+    "lesson": "Loss (-$290.20): LONG invalidation hit at $61.7. Entry flow telemetry unavailable; no causal attribution."
+  },
+  {
+    "trade_id": "quant_SOLUSDT_1789998921",
+    "timestamp": 1789999471.7170422,
+    "timestamp_utc": "2026-09-21 14:04:31 UTC",
+    "side": "LONG",
+    "entry_price": 117.9,
+    "exit_price": 118.0,
+    "realized_pnl": 1.48,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "metrics_provenance": "live",
+    "entry_metrics": {
+      "hurst": 0.59,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "UNKNOWN",
+      "robust_z": 3.29
+    },
+    "lesson": "Target hit (+$1.48): LONG closed in profit. Entry flow telemetry unavailable; no causal attribution."
+  }
+]

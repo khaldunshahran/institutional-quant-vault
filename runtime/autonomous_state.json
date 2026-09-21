@@ -1,11 +1,13 @@
 {
   "enabled": true,
   "date": "2026-09-21",
-  "daily_pnl_usd": 0.0,
-  "daily_trades_count": 0,
+  "daily_pnl_usd": -294.2,
+  "daily_trades_count": 2,
   "circuit_breaker_triggered": false,
   "daily_goal_reached": false,
   "account_balance_usd": 100000.0,
   "max_daily_allocation_usd": 15000.0,
-  "last_update": 1789967921.7549918
+  "last_update": 1790002485.57679,
+  "last_tick_utc": "1970-01-01 00:00:00 UTC",
+  "worker_alive": false
 }

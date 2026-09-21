@@ -1124,6 +1124,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(self.handle_get_settings())
         elif path == "/api/strategy-comparison":
             self.send_json(self.handle_get_strategy_comparison())
+        elif path == "/api/v2/overview":
+            self.send_json(self.handle_v2_overview())
+        elif path == "/api/v2/decisions":
+            self.send_json(self.handle_v2_decisions(parsed.query))
+        elif path == "/api/v2/integrity":
+            self.send_json(self.handle_v2_integrity())
         else:
             super().do_GET()
 
@@ -1875,6 +1881,197 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         ).start()
         return {"success": True, "message": "Multi-strategy backtest started in background."}
 
+    # ------------------------------------------------------------------
+    # v2 dashboard (Institutional Slate makeover) — read-only endpoints.
+    # Paper-only: these never mutate state and never touch live trading.
+    # ------------------------------------------------------------------
+    def _v2_load_history(self):
+        hist_file = RUNTIME_DIR / "autonomous_trade_history.json"
+        if not hist_file.exists():
+            return []
+        try:
+            data = json.loads(hist_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def _v2_starting_balance(self):
+        try:
+            state = json.loads((RUNTIME_DIR / "autonomous_state.json").read_text(encoding="utf-8"))
+            return float(state.get("account_balance_usd", 100000.0))
+        except Exception:
+            return 100000.0
+
+    def handle_v2_overview(self):
+        """One-call overview: KPIs, equity curve, per-symbol stats.
+
+        Equity curve is derived from the reconciled closed-trade history
+        (each trade's pnl_usd already equals its ledger-event sum).
+        """
+        history = self._v2_load_history()
+        start_bal = self._v2_starting_balance()
+        ordered = sorted(history, key=lambda t: str(t.get("closed_at") or ""))
+
+        equity_curve = []
+        running = start_bal
+        peak = start_bal
+        max_dd_usd = 0.0
+        max_dd_pct = 0.0
+        for t in ordered:
+            running += float(t.get("pnl_usd") or 0)
+            running_r = round(running, 2)
+            peak = max(peak, running)
+            dd_usd = peak - running
+            dd_pct = (dd_usd / peak * 100.0) if peak > 0 else 0.0
+            max_dd_usd = max(max_dd_usd, dd_usd)
+            max_dd_pct = max(max_dd_pct, dd_pct)
+            equity_curve.append({"t": t.get("closed_at"), "equity": running_r})
+
+        n = len(ordered)
+        wins = [t for t in ordered if float(t.get("pnl_usd") or 0) > 0]
+        losses = [t for t in ordered if float(t.get("pnl_usd") or 0) < 0]
+        gross_win = sum(float(t.get("pnl_usd") or 0) for t in wins)
+        gross_loss = abs(sum(float(t.get("pnl_usd") or 0) for t in losses))
+        net_pnl = round(sum(float(t.get("pnl_usd") or 0) for t in ordered), 2)
+        avg_win = round(gross_win / len(wins), 2) if wins else 0.0
+        avg_loss = round(sum(float(t.get("pnl_usd") or 0) for t in losses) / len(losses), 2) if losses else 0.0
+        profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else (99.0 if gross_win > 0 else 0.0)
+        expectancy = round(net_pnl / n, 2) if n else 0.0
+
+        # Trades per day from first to last close.
+        trades_per_day = 0.0
+        if n >= 2:
+            try:
+                from datetime import datetime as _dt
+                fmt = "%Y-%m-%d %H:%M:%S UTC"
+                d0 = _dt.strptime(str(ordered[0].get("closed_at")), fmt)
+                d1 = _dt.strptime(str(ordered[-1].get("closed_at")), fmt)
+                days = max((d1 - d0).total_seconds() / 86400.0, 1.0 / 24.0)
+                trades_per_day = round(n / days, 1)
+            except Exception:
+                trades_per_day = 0.0
+
+        per_symbol = {}
+        for t in ordered:
+            sym = str(t.get("symbol") or "UNKNOWN")
+            s = per_symbol.setdefault(sym, {"symbol": sym, "trades": 0, "net_pnl": 0.0, "wins": 0})
+            s["trades"] += 1
+            s["net_pnl"] += float(t.get("pnl_usd") or 0)
+            if float(t.get("pnl_usd") or 0) > 0:
+                s["wins"] += 1
+        symbols = []
+        for s in per_symbol.values():
+            symbols.append({
+                "symbol": s["symbol"],
+                "trades": s["trades"],
+                "net_pnl": round(s["net_pnl"], 2),
+                "win_rate_pct": round(s["wins"] / s["trades"] * 100.0, 1) if s["trades"] else 0.0,
+            })
+        symbols.sort(key=lambda s: s["net_pnl"])
+
+        # Downsample very long curves to at most 2000 points.
+        curve = equity_curve
+        if len(curve) > 2000:
+            step = len(curve) / 2000
+            curve = [curve[int(i * step)] for i in range(2000)]
+
+        return {
+            "starting_balance_usd": start_bal,
+            "equity_usd": round(running, 2),
+            "net_pnl_usd": net_pnl,
+            "kpis": {
+                "total_trades": n,
+                "wins": len(wins),
+                "losses": len(losses),
+                "win_rate_pct": round(len(wins) / n * 100.0, 1) if n else 0.0,
+                "avg_win_usd": avg_win,
+                "avg_loss_usd": avg_loss,
+                "profit_factor": profit_factor,
+                "expectancy_usd": expectancy,
+                "max_drawdown_usd": round(max_dd_usd, 2),
+                "max_drawdown_pct": round(max_dd_pct, 2),
+                "trades_per_day": trades_per_day,
+            },
+            "equity_curve": curve,
+            "per_symbol": symbols,
+        }
+
+    def handle_v2_decisions(self, query_string: str = ""):
+        """Tail of the append-only decision log (newest first)."""
+        qs = urllib.parse.parse_qs(query_string or "")
+        try:
+            limit = max(1, min(int(qs.get("limit", ["50"])[0]), 500))
+        except Exception:
+            limit = 50
+        log_file = RUNTIME_DIR / "decision_log.jsonl"
+        entries = []
+        if log_file.exists():
+            try:
+                with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                for line in lines[-limit:]:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        entries.reverse()
+        return {"count": len(entries), "decisions": entries}
+
+    def handle_v2_integrity(self):
+        """Experiment-integrity snapshot: frozen universe, ledger health,
+        pending entries, degraded-data flags from recent decisions."""
+        frozen = []
+        universe_frozen = False
+        try:
+            if GLOBAL_AUTONOMOUS_TRADER is not None:
+                universe_frozen = bool(getattr(GLOBAL_AUTONOMOUS_TRADER, "freeze_universe", False))
+                frozen = list(getattr(GLOBAL_AUTONOMOUS_TRADER, "_frozen_universe", []) or [])
+        except Exception:
+            pass
+
+        ledger_file = RUNTIME_DIR / "pnl_ledger.jsonl"
+        ledger_info = {"exists": ledger_file.exists(), "events": 0, "last_write": None}
+        if ledger_file.exists():
+            try:
+                with open(ledger_file, "r", encoding="utf-8", errors="ignore") as f:
+                    n = sum(1 for _ in f)
+                ledger_info["events"] = n
+                ledger_info["last_write"] = time.strftime(
+                    "%Y-%m-%d %H:%M:%S UTC", time.gmtime(ledger_file.stat().st_mtime))
+            except Exception:
+                pass
+
+        pending = []
+        try:
+            pending = json.loads((RUNTIME_DIR / "pending_entries.json").read_text(encoding="utf-8"))
+            if isinstance(pending, dict):
+                pending = [{"symbol": k, **(v if isinstance(v, dict) else {})} for k, v in pending.items()]
+        except Exception:
+            pending = []
+
+        # Recent decision outcomes (last 200) for degraded-data visibility.
+        recent = self.handle_v2_decisions("limit=200")["decisions"]
+        degraded = sum(1 for d in recent if d.get("reason") == "TELEMETRY_DEGRADED")
+        skipped = sum(1 for d in recent if d.get("outcome") == "SKIPPED")
+
+        return {
+            "universe_frozen": universe_frozen,
+            "universe_symbols": frozen,
+            "ledger": ledger_info,
+            "history_trades": len(self._v2_load_history()),
+            "pending_entries": pending if isinstance(pending, list) else [],
+            "recent_decisions": {
+                "sampled": len(recent),
+                "skipped": skipped,
+                "telemetry_degraded": degraded,
+            },
+        }
+
 
 def run_server(port=5000):
     # Start background telemetry poller
@@ -1883,6 +2080,7 @@ def run_server(port=5000):
     t_inst = threading.Thread(target=institutional_telemetry_worker, daemon=True)
     t_inst.start()
 
+    ThreadingHTTPServer.allow_reuse_address = True
     server = ThreadingHTTPServer(("127.0.0.1", port), DashboardHandler)
     print(f"\n=======================================================")
     print(f"  BTC 5M Polymarket Trading Cockpit Server Active")
