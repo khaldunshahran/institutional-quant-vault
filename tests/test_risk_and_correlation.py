@@ -6,20 +6,52 @@ from scripts.paper_fill_simulator import MAKER_FEE_RATE, TAKER_FEE_RATE
 
 
 class StubFillSimulator:
-    """Deterministic test double: every order fills in full at the requested
-    price with the correct fee tier. Used ONLY in tests — production paper
-    trading goes through the realistic PaperFillSimulator."""
+    """Deterministic test double: orders fill in full at the requested price
+    with the correct fee tier. place/poll mimic the production working-order
+    API (poll discovers the full fill on the first check). Used ONLY in tests
+    — production paper trading goes through the realistic PaperFillSimulator."""
 
-    def simulate_maker_fill(self, symbol, side, quantity, limit_price, max_wait_sec=120):
-        notional = round(quantity * limit_price, 2)
+    def __init__(self):
+        self._orders = {}
+
+    def place_maker_order(self, symbol, side, quantity, limit_price, max_wait_sec=120):
+        order_id = f"stub_{symbol}_{side}_{quantity}_{len(self._orders)}"
+        self._orders[order_id] = {
+            "symbol": symbol, "side": side, "quantity": quantity,
+            "limit_price": limit_price, "status": "WORKING",
+        }
         return {
-            "status": "FILLED", "symbol": symbol, "side": side,
-            "requested_qty": quantity, "filled_qty": quantity, "avg_price": limit_price,
-            "notional_usd": notional,
-            "fee_usd": round(notional * MAKER_FEE_RATE, 4), "is_maker": True,
+            "status": "WORKING", "order_id": order_id, "symbol": symbol, "side": side,
+            "limit_price": limit_price, "requested_qty": quantity,
+            "filled_qty": 0.0, "remaining_qty": quantity,
+            "new_filled_qty": 0.0, "new_fee_usd": 0.0,
+            "avg_price": limit_price, "is_maker": True,
             "reason": None,
             "timestamp_utc": "2026-09-21 00:00:00 UTC",
         }
+
+    def poll_maker_order(self, order_id):
+        o = self._orders[order_id]
+        notional = round(o["quantity"] * o["limit_price"], 2)
+        fee = round(notional * MAKER_FEE_RATE, 4)
+        o["status"] = "FILLED"
+        return {
+            "status": "FILLED", "order_id": order_id, "symbol": o["symbol"], "side": o["side"],
+            "limit_price": o["limit_price"], "requested_qty": o["quantity"],
+            "filled_qty": o["quantity"], "remaining_qty": 0.0,
+            "new_filled_qty": o["quantity"], "new_fee_usd": fee,
+            "avg_price": o["limit_price"], "is_maker": True,
+            "reason": None,
+            "timestamp_utc": "2026-09-21 00:00:00 UTC",
+        }
+
+    def cancel_maker_order(self, order_id):
+        o = self._orders.get(order_id, {})
+        o["status"] = "CANCELLED"
+        return {"status": "CANCELLED", "order_id": order_id, "reason": "cancelled_by_caller",
+                "filled_qty": 0.0, "remaining_qty": o.get("quantity", 0.0),
+                "new_filled_qty": 0.0, "new_fee_usd": 0.0,
+                "timestamp_utc": "2026-09-21 00:00:00 UTC"}
 
     def simulate_taker_fill(self, symbol, side, quantity, reference_price=None):
         price = reference_price if reference_price else 100.0
@@ -32,6 +64,13 @@ class StubFillSimulator:
             "reason": None, "degraded": False,
             "timestamp_utc": "2026-09-21 00:00:00 UTC",
         }
+
+
+def open_and_fill(trader, sig):
+    """Entries are working orders now: stage the signal, then poll until the
+    (stubbed) fill finalizes the position."""
+    trader._open_position(sig)
+    trader._poll_pending_entries()
 
 
 @pytest.fixture
@@ -67,7 +106,7 @@ def test_crypto_correlation_cap(isolated_trader):
             "tp2_pct": 0.035,
             "setup": "TEST"
         }
-        trader._open_position(sig)
+        open_and_fill(trader, sig)
 
     assert len(trader.open_positions) == 3
 
@@ -82,7 +121,7 @@ def test_crypto_correlation_cap(isolated_trader):
         "tp2_pct": 0.035,
         "setup": "TEST"
     }
-    trader._open_position(fourth_crypto)
+    open_and_fill(trader, fourth_crypto)
     assert "AVAXUSDT" not in trader.open_positions, "4th crypto should be blocked by correlation cap!"
     assert len(trader.open_positions) == 3
 
@@ -97,7 +136,7 @@ def test_crypto_correlation_cap(isolated_trader):
         "tp2_pct": 0.025,
         "setup": "TEST"
     }
-    trader._open_position(gold_sig)
+    open_and_fill(trader, gold_sig)
     assert "XAUUSDT" in trader.open_positions, "Gold should be permitted as uncorrelated hedge!"
     assert len(trader.open_positions) == 4
 
@@ -118,7 +157,7 @@ def test_early_break_even_ratchet(isolated_trader):
         "tp2_pct": 0.06,  # TP2 = 106.0
         "setup": "TEST"
     }
-    trader._open_position(sig)
+    open_and_fill(trader, sig)
     pos = trader.open_positions["BTCUSDT"]
 
     assert pos["stop_loss"] == 98.0

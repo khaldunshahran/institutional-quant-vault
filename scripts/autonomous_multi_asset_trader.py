@@ -70,7 +70,7 @@ from scripts.economic_calendar_engine import EconomicCalendarEngine
 from scripts.session_clock_engine import SessionClockEngine
 from scripts.jev_decision_engine import JevDecisionEngine
 from scripts.math_quant_engine import compute_hurst_exponent, compute_robust_mad_zscore
-from scripts.paper_fill_simulator import PaperFillSimulator, TP_WORKING_WAIT_SEC
+from scripts.paper_fill_simulator import PaperFillSimulator, TP_WORKING_WAIT_SEC, DEFAULT_MAKER_WAIT_SEC
 
 
 class AutonomousMultiAssetTrader:
@@ -135,6 +135,12 @@ class AutonomousMultiAssetTrader:
         self.lock = threading.RLock()
 
         self.open_positions: Dict[str, Dict[str, Any]] = self._load_positions()
+        # Pending entry working orders: symbol -> {order_id, signal, qty,
+        # price, filled_qty, fee_usd, placed_ts}. A signal becomes a position
+        # only when its post-only maker order actually fills (polled each
+        # tick against post-placement market activity). In-memory only: a
+        # restart simply drops unfilled pending entries — no phantom fills.
+        self.pending_entries: Dict[str, Dict[str, Any]] = {}
         self.daily_pnl_usd: float = 0.0
         self.daily_trades_count: int = 0
         self.daily_reset_date: str = time.strftime("%Y-%m-%d", time.gmtime())
@@ -301,9 +307,19 @@ class AutonomousMultiAssetTrader:
     def _apply_exit_leg(self, pos: Dict[str, Any], leg: str, fill: Dict[str, Any], exit_side: str) -> float:
         """Book a simulated exit fill against a position.
 
-        Realized PnL of the leg = gross - exit fee - pro-rata entry fee -
-        pro-rata funding. Updates the position's realized total and remaining
-        quantity, and appends to the immutable ledger.
+        SINGLE-BOOKING CONVENTION (the invariant the whole experiment rests
+        on): every economic event is recorded EXACTLY ONCE as a ledger event
+        via _record_fill_event.
+          - ENTRY costs are booked once, at _open_position time, as an ENTRY
+            event with realized_pnl_usd = -entry_fee.
+          - FUNDING costs are booked once, when charged, as a FUNDING event
+            with realized_pnl_usd = -funding.
+          - Exit legs therefore book ONLY gross PnL minus the exit fee:
+            realized = gross - exit_fee. They must NOT subtract the entry
+            fee or funding again (that was the old double-counting bug).
+        Position realized_pnl_usd is initialized to -entry_fee at open and
+        accumulates each FUNDING charge and each exit leg, so it always
+        equals the sum of the trade's ledger events.
         """
         entry_avg = float(pos.get("entry_avg_price", pos["entry_price"]))
         entry_qty = float(pos.get("entry_qty", pos["quantity"]))
@@ -312,10 +328,7 @@ class AutonomousMultiAssetTrader:
             gross = (float(fill["avg_price"]) - entry_avg) * exit_qty
         else:
             gross = (entry_avg - float(fill["avg_price"])) * exit_qty
-        share = (exit_qty / entry_qty) if entry_qty > 0 else 0.0
-        entry_fee_share = float(pos.get("entry_fee_usd", 0.0)) * share
-        funding_share = float(pos.get("funding_paid_usd", 0.0)) * share
-        realized = round(gross - float(fill["fee_usd"]) - entry_fee_share - funding_share, 2)
+        realized = round(gross - float(fill["fee_usd"]), 2)
         pos["realized_pnl_usd"] = round(float(pos.get("realized_pnl_usd", 0.0)) + realized, 2)
         pos["remaining_quantity"] = round(float(pos.get("remaining_quantity", pos["quantity"])) - exit_qty, 4)
         pos.setdefault("legs", []).append({
@@ -351,9 +364,25 @@ class AutonomousMultiAssetTrader:
             funding_paid_usd=float(pos.get("funding_paid_usd", 0.0)),
         )
 
+    @staticmethod
+    def _tp1_abandoned(pos: Dict[str, Any], cur_price: float, entry_px: float, is_long: bool) -> bool:
+        """A working TP1 order is abandoned when price falls back through
+        entry before the TP1 quantity completed: the breakout that justified
+        the scale-out has failed. Banked partials stay banked; no free-trade
+        lock is granted on an incomplete TP1."""
+        if is_long:
+            return cur_price <= entry_px
+        return cur_price >= entry_px
+
     def _accrue_funding(self, pos: Dict[str, Any], notional_usd: float) -> float:
         """Charge one flat funding interval per 8h UTC window (00/08/16).
-        Conservative: always charged to the position, never credited."""
+        Conservative: always charged to the position, never credited.
+
+        STAMP ORDER MATTERS: a position younger than 5 minutes is stamped
+        "not due" for the current window — it is never marked "processed"
+        without being charged, so no funding window can ever be skipped.
+        The charge is booked exactly ONCE here (single-booking convention);
+        exit legs must not subtract funding again."""
         cur_day = time.strftime("%Y-%m-%d", time.gmtime())
         window = int(time.gmtime().tm_hour // 8)
         key = f"{cur_day}-{window}"
@@ -361,9 +390,11 @@ class AutonomousMultiAssetTrader:
             return 0.0
         pos["last_funding_window"] = key
         if time.time() - float(pos.get("open_time", time.time())) < 300:
+            self._save_positions()
             return 0.0  # positions under 5 minutes old are not charged
         funding = PaperFillSimulator.compute_funding(notional_usd)
         pos["funding_paid_usd"] = round(float(pos.get("funding_paid_usd", 0.0)) + funding, 2)
+        pos["realized_pnl_usd"] = round(float(pos.get("realized_pnl_usd", 0.0)) - funding, 2)
         self._record_fill_event(
             trade_id=pos.get("id", f"trade_{int(time.time())}"),
             symbol=pos["symbol"],
@@ -428,6 +459,17 @@ class AutonomousMultiAssetTrader:
         return round(self.account_balance_usd + self._lifetime_realized_pnl(), 2)
 
     def start(self) -> Dict[str, Any]:
+        # HARD PAPER-ONLY GUARD: the trader can never start in live mode
+        # unless the explicit live-trading confirmation is present. This is
+        # defense in depth — the adapter itself also refuses live mode.
+        adapter = getattr(self, "execution_adapter", None)
+        if adapter is not None and getattr(adapter, "mode", "paper") == "live":
+            from scripts.binance_execution_adapter import BinanceExecutionAdapter
+            if not BinanceExecutionAdapter.live_trading_allowed():
+                raise RuntimeError(
+                    "LIVE mode REFUSED by the paper-only guard: set "
+                    "QUANT_VAULT_ENABLE_LIVE_TRADING='I_UNDERSTAND_THE_RISK' "
+                    "and provide Binance API credentials, or run in paper mode.")
         with self.lock:
             if self.is_running and self.worker_thread and self.worker_thread.is_alive():
                 return {"success": True, "status": "already_running"}
@@ -537,7 +579,14 @@ class AutonomousMultiAssetTrader:
         }
 
     def handle_remote_action(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Executes remote commands received from Telegram."""
+        """Executes remote commands received from Telegram.
+
+        close/closeall are routed through the SAME ledger-aware taker-close
+        path as every other exit (close_position): taker fill simulation
+        with slippage, fees, funding, ledger events, and reconciled trade
+        history. They never delete positions directly — the old direct-delete
+        path silently skipped fees/slippage/ledger and corrupted the books.
+        """
         if action == "pause":
             return self.stop()
         elif action == "resume":
@@ -545,43 +594,20 @@ class AutonomousMultiAssetTrader:
         elif action == "close":
             symbol = payload.get("symbol", "").upper()
             if symbol in self.open_positions:
-                pos = self.open_positions[symbol]
-                cur_price = pos.get("current_price", pos["entry_price"])
-                del self.open_positions[symbol]
-                self._save_positions()
-                trade_record = {
-                    "symbol": symbol,
-                    "side": pos["side"],
-                    "entry_price": pos["entry_price"],
-                    "exit_price": cur_price,
-                    "pnl_usd": pos.get("unrealized_pnl_usd", 0.0),
-                    "pnl_pct": pos.get("unrealized_pnl_pct", 0.0),
-                    "exit_reason": "REMOTE_TELEGRAM_CLOSE",
-                    "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-                    "mode": pos["mode"]
-                }
-                self._record_closed_trade(trade_record)
-                return {"success": True, "closed": symbol}
+                res = self.close_position(symbol, reason="REMOTE_TELEGRAM_CLOSE")
+                if res.get("success"):
+                    return {"success": True, "closed": symbol, "trade": res.get("trade")}
+                return {"success": False, "error": res.get("error", "close_failed")}
             return {"success": False, "error": f"{symbol} not active"}
         elif action == "closeall":
             closed_syms = list(self.open_positions.keys())
+            results = []
             for sym in closed_syms:
-                pos = self.open_positions[sym]
-                trade_record = {
-                    "symbol": sym,
-                    "side": pos["side"],
-                    "entry_price": pos["entry_price"],
-                    "exit_price": pos.get("current_price", pos["entry_price"]),
-                    "pnl_usd": pos.get("unrealized_pnl_usd", 0.0),
-                    "pnl_pct": pos.get("unrealized_pnl_pct", 0.0),
-                    "exit_reason": "REMOTE_TELEGRAM_CLOSEALL",
-                    "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-                    "mode": pos["mode"]
-                }
-                self._record_closed_trade(trade_record)
-            self.open_positions.clear()
-            self._save_positions()
-            return {"success": True, "closed_count": len(closed_syms)}
+                res = self.close_position(sym, reason="REMOTE_TELEGRAM_CLOSEALL")
+                results.append({"symbol": sym, "success": res.get("success"),
+                                "error": res.get("error")})
+            return {"success": True, "closed_count": sum(1 for r in results if r["success"]),
+                    "results": results}
         return {"success": False, "error": f"Unknown action: {action}"}
 
     def _fetch_market_data(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -1127,30 +1153,128 @@ class AutonomousMultiAssetTrader:
         if qty <= 0:
             return
 
-        res = self.execution_adapter.execute_order(symbol, side, qty, price)
-        if not res.get("success"):
-            # The fill simulator rejected/expired the post-only entry: no
-            # position, no silent fill. Logged for the experiment record.
+        res = self.execution_adapter.fill_simulator.place_maker_order(
+            symbol, side, qty, price, max_wait_sec=DEFAULT_MAKER_WAIT_SEC)
+        if res.get("status") != "WORKING":
+            # The post-only entry was rejected (would cross the touch, no
+            # book, bad filters): no position, no silent fill. Logged for
+            # the experiment record.
             self._log_decision(symbol, "REJECTED", "ENTRY_FILL_FAILED", {
                 "side": side,
                 "requested_qty": qty,
                 "limit_price": price,
-                "error": res.get("error"),
+                "reason": res.get("reason"),
             })
             return
-        fill = res.get("order", {})
-        # Partial fills open a smaller position at the average fill price —
-        # never the full requested size at the requested price.
-        qty = float(fill.get("quantity", 0.0))
-        price = float(fill.get("price", price))
-        entry_fee_usd = float(fill.get("fee_usd", 0.0))
-        fill_status = fill.get("status", "FILLED")
+        # A real post-only order rests on the book. The position is created
+        # ONLY when the order actually fills, discovered by polling against
+        # real post-placement market activity (_poll_pending_entries, every
+        # 1s tick). Partial fills open a smaller position at the limit price.
+        self.pending_entries[symbol] = {
+            "order_id": res["order_id"],
+            "signal": signal,
+            "side": side,
+            "limit_price": float(res["limit_price"]),
+            "requested_qty": float(res["requested_qty"]),
+            "filled_qty": 0.0,
+            "fee_usd": 0.0,
+            "placed_ts": time.time(),
+        }
+        self._log_decision(symbol, "PENDING", "ENTRY_WORKING", {
+            "side": side,
+            "limit_price": float(res["limit_price"]),
+            "requested_qty": float(res["requested_qty"]),
+            "order_id": res["order_id"],
+        })
+        return
+
+    def _poll_pending_entries(self):
+        """Poll every pending entry working order once per 1s tick. Opens a
+        position only on real post-placement fills; banks partials; drops
+        unfilled expired orders. Any poll exception is swallowed so one bad
+        symbol can never kill the loop."""
+        for symbol in list(self.pending_entries.keys()):
+            pe = self.pending_entries[symbol]
+            try:
+                upd = self.execution_adapter.fill_simulator.poll_maker_order(pe["order_id"])
+            except Exception as e:
+                logger.warning(f"[TRADER] poll of pending entry {symbol} failed: {e}")
+                continue
+            status = upd.get("status")
+            if status == "UNKNOWN":
+                self._log_decision(symbol, "REJECTED", "ENTRY_ORDER_LOST", {
+                    "order_id": pe["order_id"],
+                    "reason": upd.get("reason"),
+                })
+                self.pending_entries.pop(symbol, None)
+                continue
+            if status in ("CANCELLED", "REJECTED"):
+                # Terminal from the outside (user cancel / venue reject):
+                # never leave the entry pending forever.
+                self._log_decision(symbol, "REJECTED", "ENTRY_ORDER_TERMINATED", {
+                    "order_id": pe["order_id"],
+                    "status": status,
+                    "reason": upd.get("reason"),
+                })
+                self.pending_entries.pop(symbol, None)
+                continue
+            new_fill = float(upd.get("new_filled_qty", 0.0))
+            if new_fill > 0:
+                pe["filled_qty"] = round(float(upd.get("filled_qty", pe["filled_qty"])), 8)
+                pe["fee_usd"] = round(pe["fee_usd"] + float(upd.get("new_fee_usd", 0.0)), 4)
+            filled = float(pe["filled_qty"])
+            if status == "FILLED" or (status == "EXPIRED" and filled > 0):
+                if status == "EXPIRED":
+                    self._log_decision(symbol, "PARTIAL", "ENTRY_PARTIAL_EXPIRED", {
+                        "order_id": pe["order_id"],
+                        "filled_qty": filled,
+                        "requested_qty": pe["requested_qty"],
+                    })
+                self._finalize_entry(symbol)
+            elif status == "EXPIRED":
+                self._log_decision(symbol, "REJECTED", "ENTRY_EXPIRED", {
+                    "order_id": pe["order_id"],
+                    "limit_price": pe["limit_price"],
+                    "requested_qty": pe["requested_qty"],
+                    "reason": upd.get("reason"),
+                })
+                self.pending_entries.pop(symbol, None)
+            # WORKING / PARTIAL: keep waiting for post-placement fills.
+
+    def _finalize_entry(self, symbol: str):
+        """Create the position dict once a pending entry order has filled
+        (fully or partially). The entry price is the maker's limit price —
+        post-only fills always happen at the limit."""
+        pe = self.pending_entries.pop(symbol, None)
+        if pe is None:
+            return
+        if symbol in self.open_positions:
+            # Defensive: never let two positions exist for one symbol. The
+            # fill is real, but the symbol is already managed — drop this
+            # one loudly instead of overwriting.
+            self._log_decision(symbol, "REJECTED", "ENTRY_DUPLICATE_SYMBOL", {
+                "order_id": pe["order_id"],
+            })
+            return
+        signal = pe["signal"]
+        side = pe["side"]
+        qty = float(pe["filled_qty"])
+        price = float(pe["limit_price"])
+        entry_fee_usd = float(pe["fee_usd"])
         if qty <= 0:
             self._log_decision(symbol, "REJECTED", "ENTRY_ZERO_FILL", {
-                "side": side, "limit_price": price, "fill_status": fill_status,
+                "side": side, "limit_price": price, "order_id": pe["order_id"],
             })
             return
+        self._create_position(signal, side, qty, price, entry_fee_usd)
 
+    def _create_position(self, signal: Dict[str, Any], side: str, qty: float,
+                         price: float, entry_fee_usd: float):
+        """Build and persist a position from a REAL fill. Single-booking:
+        position realized_pnl_usd starts at -entry_fee (booked once here as
+        the ENTRY ledger event); exit legs later add ONLY gross minus their
+        own exit fee; funding charges add ONLY their own amount."""
+        symbol = signal["symbol"]
         is_long = (side == "BUY")
         # Dynamic ATR-Calibrated Scalp Boundaries
         sl_pct = signal.get("sl_pct", 0.015)
@@ -1172,7 +1296,10 @@ class AutonomousMultiAssetTrader:
             "entry_qty": qty,              # filled quantity (partial fills open smaller)
             "entry_fee_usd": round(entry_fee_usd, 4),
             "funding_paid_usd": 0.0,
-            "realized_pnl_usd": 0.0,      # sum of booked exit legs (TP1 + runner)
+            # Single-booking: the entry fee is realized HERE, once. Exit
+            # legs add only gross-minus-their-own-fee; funding adds only
+            # its own charge. This always equals the trade's ledger sum.
+            "realized_pnl_usd": round(-entry_fee_usd, 2),
             "legs": [],
             "last_funding_window": None,
             "quantity": qty,
@@ -1220,7 +1347,7 @@ class AutonomousMultiAssetTrader:
             "setup": position.get("setup"),
             "side": position.get("side"),
             "entry_price": price,
-            "fill_status": fill_status,
+            "fill_status": "FILLED",
             "entry_fee_usd": round(entry_fee_usd, 4),
             "notional_usd": position.get("notional_usd"),
             "jev_engine_mode": position.get("jev_engine_mode"),
@@ -1301,47 +1428,123 @@ class AutonomousMultiAssetTrader:
                     print(f"[QUANT VAULT] 🔒 EARLY BREAK-EVEN LOCKED on {symbol} at +1.0 ATR (+{pnl_pct:.2f}%).")
 
             # 2. Fast TP1 Scale-Out (Bank 50% Profit & Move Stop strictly to Fee-Protected Break-Even)
-            # The TP1 leg is a real resting limit order: it only banks profit
-            # if the fill simulator actually fills it (trade-through + volume).
-            # A wick touch with no volume leaves the order working.
+            # The TP1 leg is a REAL resting working order (post-only): it is
+            # placed once when the TP1 level is first touched, then polled
+            # every tick against post-placement trades. Partial fills are
+            # banked incrementally; tp1_hit is set ONLY when the full
+            # intended TP1 quantity is filled. The unfilled remainder keeps
+            # working (no free-trade lock on a partial). If price falls back
+            # through entry before completion, the stale order is abandoned
+            # (the breakout failed — do not leave a limit order floating).
             if not pos.get("tp1_hit", False):
+                tp_exit_side = "SELL" if is_long else "BUY"
                 tp1_condition = (cur_price >= pos["tp1"]) if is_long else (cur_price <= pos["tp1"])
-                if tp1_condition:
+                tp1_order_id = pos.get("tp1_order_id")
+                if tp1_order_id is None and tp1_condition:
                     scale_qty = round(qty * 0.5, 4)
-                    tp_exit_side = "SELL" if is_long else "BUY"
-                    tp_fill = self.execution_adapter.fill_simulator.simulate_maker_fill(
-                        symbol, tp_exit_side, scale_qty, pos["tp1"],
-                        max_wait_sec=TP_WORKING_WAIT_SEC,
-                    )
-                    if tp_fill["status"] in ("REJECTED", "EXPIRED") or tp_fill["filled_qty"] <= 0:
-                        self._log_decision(symbol, "NO_ACTION", "TP1_UNFILLED", {
-                            "tp1": pos["tp1"],
-                            "fill_status": tp_fill["status"],
-                            "reason": tp_fill.get("reason"),
+                    if scale_qty > 0:
+                        order = self.execution_adapter.fill_simulator.place_maker_order(
+                            symbol, tp_exit_side, scale_qty, pos["tp1"],
+                            max_wait_sec=TP_WORKING_WAIT_SEC,
+                        )
+                        if order.get("status") == "WORKING":
+                            pos["tp1_order_id"] = order["order_id"]
+                            pos["tp1_target_qty"] = float(order["requested_qty"])
+                            pos["tp1_filled_qty"] = 0.0
+                            self._save_positions()
+                            self._log_decision(symbol, "PENDING", "TP1_WORKING", {
+                                "tp1": pos["tp1"],
+                                "target_qty": pos["tp1_target_qty"],
+                                "order_id": order["order_id"],
+                            })
+                        else:
+                            self._log_decision(symbol, "NO_ACTION", "TP1_UNFILLED", {
+                                "tp1": pos["tp1"],
+                                "fill_status": order.get("status"),
+                                "reason": order.get("reason"),
+                            })
+                elif tp1_order_id is not None:
+                    upd = self.execution_adapter.fill_simulator.poll_maker_order(tp1_order_id)
+                    upd_status = upd.get("status")
+                    if upd_status == "UNKNOWN":
+                        # Order state lost (e.g. restart wiped working orders).
+                        # Banked partials stay banked; re-place the remainder.
+                        pos.pop("tp1_order_id", None)
+                        self._save_positions()
+                        self._log_decision(symbol, "PENDING", "TP1_ORDER_LOST", {
+                            "reason": upd.get("reason"),
                         })
                     else:
-                        banked_pnl = self._apply_exit_leg(pos, "TP1", tp_fill, tp_exit_side)
-                        pos["tp1_hit"] = True
-                        pos["break_even_active"] = True
-                        pos["stop_loss"] = self._fee_protected_be(pos)
-                        self._save_positions()
-                        self._save_state()
+                        new_fill = float(upd.get("new_filled_qty", 0.0))
+                        if new_fill > 0:
+                            fill_like = {
+                                "filled_qty": new_fill,
+                                "avg_price": pos["tp1"],
+                                "fee_usd": float(upd.get("new_fee_usd", 0.0)),
+                                "timestamp_utc": upd.get("timestamp_utc"),
+                            }
+                            chunk_pnl = self._apply_exit_leg(pos, "TP1", fill_like, tp_exit_side)
+                            pos["tp1_filled_qty"] = round(pos.get("tp1_filled_qty", 0.0) + new_fill, 8)
+                            self._save_positions()
+                            self._log_decision(symbol, "PARTIAL", "TP1_PARTIAL_FILL", {
+                                "chunk_pnl": chunk_pnl,
+                                "filled_qty": pos["tp1_filled_qty"],
+                                "target_qty": pos.get("tp1_target_qty"),
+                                "order_status": upd_status,
+                            })
+                        target = float(pos.get("tp1_target_qty", 0.0))
+                        filled_so_far = float(pos.get("tp1_filled_qty", 0.0))
+                        if upd_status == "FILLED" or (target > 0 and filled_so_far >= target - 1e-9):
+                            # FULL TP1 quantity banked: NOW lock the free trade.
+                            pos["tp1_hit"] = True
+                            pos["break_even_active"] = True
+                            pos["stop_loss"] = self._fee_protected_be(pos)
+                            pos.pop("tp1_order_id", None)
+                            self._save_positions()
+                            self._save_state()
 
-                        thought = f"[{time.strftime('%H:%M:%S UTC')}] 💰 TP1 HIT on {symbol}! Banked ${banked_pnl:+.2f} (fill: {tp_fill['status']}). FREE TRADE LOCKED (SL -> Break-Even)."
-                        self._add_thought(thought)
-                        print(f"[QUANT VAULT] 💰 TP1 HIT on {symbol}! Banked ${banked_pnl:+.2f}. SL moved to Break-Even.")
+                            banked_total = sum(
+                                float(leg.get("realized_pnl_usd", 0.0))
+                                for leg in pos.get("legs", []) if leg.get("leg") == "TP1")
+                            thought = f"[{time.strftime('%H:%M:%S UTC')}] 💰 TP1 HIT on {symbol}! Banked ${banked_total:+.2f}. FREE TRADE LOCKED (SL -> Break-Even)."
+                            self._add_thought(thought)
+                            print(f"[QUANT VAULT] 💰 TP1 HIT on {symbol}! Banked ${banked_total:+.2f}. SL moved to Break-Even.")
 
-                        try:
-                            self.telegram_bot.notify_tp1(
-                                symbol=symbol,
-                                side=pos["side"],
-                                banked_pnl=banked_pnl,
-                                be_stop=pos["stop_loss"],
-                                daily_pnl=self.daily_pnl_usd,
-                                daily_target=self.daily_profit_target_usd
-                            )
-                        except Exception:
-                            pass
+                            try:
+                                self.telegram_bot.notify_tp1(
+                                    symbol=symbol,
+                                    side=pos["side"],
+                                    banked_pnl=banked_total,
+                                    be_stop=pos["stop_loss"],
+                                    daily_pnl=self.daily_pnl_usd,
+                                    daily_target=self.daily_profit_target_usd
+                                )
+                            except Exception:
+                                pass
+                        elif upd_status == "EXPIRED":
+                            pos.pop("tp1_order_id", None)
+                            self._save_positions()
+                            self._log_decision(symbol, "PARTIAL" if filled_so_far > 0 else "NO_ACTION",
+                                              "TP1_PARTIAL_EXPIRED" if filled_so_far > 0 else "TP1_UNFILLED", {
+                                "filled_qty": filled_so_far,
+                                "target_qty": target,
+                                "reason": upd.get("reason"),
+                            })
+                        elif self._tp1_abandoned(pos, cur_price, entry_px, is_long):
+                            # Price fell back through entry: the breakout
+                            # failed. Cancel the stale order; banked partials
+                            # stay banked; tp1_hit stays False (no free trade
+                            # on an incomplete scale-out).
+                            self.execution_adapter.fill_simulator.cancel_maker_order(tp1_order_id)
+                            pos.pop("tp1_order_id", None)
+                            self._save_positions()
+                            self._log_decision(symbol, "PARTIAL" if filled_so_far > 0 else "NO_ACTION",
+                                              "TP1_ABANDONED", {
+                                "filled_qty": filled_so_far,
+                                "target_qty": target,
+                                "cur_price": cur_price,
+                                "entry_price": entry_px,
+                            })
 
             # 3. Dynamic Trailing Profit-Locker on Remaining 50% Runner
             if pos.get("tp1_hit"):
@@ -1421,6 +1624,7 @@ class AutonomousMultiAssetTrader:
                 total_fees = round(float(pos.get("entry_fee_usd", 0.0)) + sum(float(l.get("fee_usd", 0.0)) for l in legs), 4)
 
                 trade_record = {
+                    "trade_id": pos.get("id"),
                     "symbol": symbol,
                     "side": pos["side"],
                     "entry_price": entry_px,
@@ -1535,9 +1739,36 @@ class AutonomousMultiAssetTrader:
 
     def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
         with self.lock:
+            # A pending (unfilled) entry is also a commitment to the symbol:
+            # cancel it first so no position opens after the user asked out.
+            pending = self.pending_entries.pop(symbol, None)
+            if pending:
+                try:
+                    self.execution_adapter.fill_simulator.cancel_maker_order(pending["order_id"])
+                except Exception:
+                    pass
+                self._log_decision(symbol, "CANCELLED", "PENDING_ENTRY_CANCELLED", {
+                    "order_id": pending.get("order_id"),
+                    "reason": reason,
+                })
+                self._add_thought(
+                    f"[{time.strftime('%H:%M:%S UTC')}] ✋ {symbol} pending entry cancelled ({reason}). "
+                    f"No position was opened."
+                )
             if symbol not in self.open_positions:
+                if pending:
+                    return {"success": True, "closed": symbol,
+                            "note": "Pending entry cancelled before any position opened."}
                 return {"success": False, "error": f"Position for {symbol} not found"}
             pos = self.open_positions[symbol]
+            # Cancel any working TP1 order first: the position is being
+            # closed, so its scale-out order must not keep resting.
+            tp1_order_id = pos.pop("tp1_order_id", None)
+            if tp1_order_id:
+                try:
+                    self.execution_adapter.fill_simulator.cancel_maker_order(tp1_order_id)
+                except Exception:
+                    pass
             cur_price = pos.get("current_price", pos["entry_price"])
             try:
                 data = self._fetch_market_data(symbol)
@@ -1577,6 +1808,7 @@ class AutonomousMultiAssetTrader:
             margin = float(pos.get("margin_collateral_usd", 0.0)) or 1.0
 
             rec = {
+                "trade_id": pos.get("id"),
                 "symbol": symbol,
                 "side": pos["side"],
                 "entry_price": entry_px,
@@ -1665,6 +1897,11 @@ class AutonomousMultiAssetTrader:
                 if self.open_positions:
                     self._manage_open_positions()
 
+                # 1b. Poll pending entry working orders every 1 second.
+                # Positions are created ONLY on real post-placement fills.
+                if self.pending_entries:
+                    self._poll_pending_entries()
+
                 # 2. Strict Circuit Breaker: Halt if -$3,000 daily loss hit
                 if self.daily_pnl_usd <= -self.daily_loss_limit_usd:
                     if not self.circuit_breaker_triggered:
@@ -1695,6 +1932,8 @@ class AutonomousMultiAssetTrader:
                         for symbol in watchlist:
                             if symbol in self.open_positions:
                                 continue
+                            if symbol in self.pending_entries:
+                                continue  # entry working order already resting; no double exposure
 
                             # Skip if in active cooldown
                             if symbol in self.symbol_cooldowns:

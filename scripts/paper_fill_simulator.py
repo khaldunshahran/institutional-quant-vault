@@ -1,16 +1,17 @@
 """
 Paper Fill Simulator — the single source of truth for paper execution.
 
-Replaces the old "every order instantly fills at the requested price" model.
 Every paper fill (entry or exit) goes through here so the experiment measures
 one consistent, documented, conservative execution model:
 
-- MAKER (post-only limit, entries and TP orders): rejects if the limit would
-  cross the touch (a real GTX/post-only order would be rejected); otherwise
-  the order rests and fills only on TRADE-THROUGH with back-of-queue
-  volume-share logic. Partial fills are possible. Unfilled remainder expires
-  after max_wait_sec. Fills are adverse by construction: a buy limit only
-  fills when price trades down through it.
+- MAKER (post-only limit, entries and TP orders) is a WORKING ORDER, not an
+  instant outcome. place_maker_order() rests the order; poll_maker_order()
+  checks it against REAL market activity observed AFTER placement (Binance
+  aggTrades with timestamps strictly greater than the placement timestamp).
+  Pre-placement price action can NEVER fill an order — that was the old
+  candle-proxy flaw, and it is gone. Fills require trade-through with
+  back-of-queue volume-share logic. Partial fills are banked incrementally;
+  unfilled remainder expires after max_wait_sec or is cancelled.
 - TAKER (stop-market SL/BE exits, manual/Telegram closes): fills immediately
   at the touch plus half-spread slippage and a size-impact term.
 - Fees: 0.015% maker / 0.045% taker (single constants — no more conflicting
@@ -19,12 +20,10 @@ one consistent, documented, conservative execution model:
   the live funding rate is not fetched).
 
 Documented limitations (not hidden):
-- The resting-order fill path is simulated by walking forward through
-  recently closed 1m candles as a proxy for the next N seconds. It is
-  conservative (back of queue, 10% volume share, requires trade-through)
-  but it is still a proxy, not a live order book.
+- Queue modeling is an estimate (10% volume share, back of queue); a real
+  matching engine is not replicated.
 - Funding uses a flat estimate, not the live Binance funding rate.
-- Network fetchers are injectable (book_fetcher, klines_fetcher,
+- Network fetchers are injectable (book_fetcher, trades_fetcher,
   filters_fetcher) so tests run deterministically without network.
 
 Paper trading only. This module never touches real money.
@@ -46,7 +45,7 @@ TAKER_FEE_RATE = 0.00045          # 0.045% taker
 FUNDING_RATE_PER_INTERVAL = 0.0001  # 0.01% per 8h funding interval (flat estimate)
 VOLUME_SHARE = 0.10              # back-of-queue: we capture 10% of volume at our level
 DEFAULT_MAKER_WAIT_SEC = 120     # resting entry orders expire after 120s
-TP_WORKING_WAIT_SEC = 60         # TP limit orders re-evaluated each touch
+TP_WORKING_WAIT_SEC = 900        # TP limit orders work up to 15 min (abandoned earlier on failure)
 DEGRADED_TAKER_SLIPPAGE_MULT = 3.0  # slippage multiplier when book is unavailable
 
 FAPI_BASE = "https://fapi.binance.com"
@@ -67,7 +66,7 @@ class PaperFillSimulator:
         self,
         cache_dir: str = "runtime",
         book_fetcher: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
-        klines_fetcher: Optional[Callable[[str, int], List[Dict[str, Any]]]] = None,
+        trades_fetcher: Optional[Callable[[str, int], List[Dict[str, Any]]]] = None,
         filters_fetcher: Optional[Callable[[str], Optional[Dict[str, float]]]] = None,
     ):
         self.cache_dir = Path(cache_dir)
@@ -75,8 +74,12 @@ class PaperFillSimulator:
         self.filters_cache_file = self.cache_dir / "exchange_info_cache.json"
         self._filters_mem: Dict[str, Dict[str, float]] = {}
         self._book_fetcher = book_fetcher or self._fetch_book
-        self._klines_fetcher = klines_fetcher or self._fetch_klines
+        self._trades_fetcher = trades_fetcher or self._fetch_trades
         self._filters_fetcher = filters_fetcher or self._fetch_filters
+        # Working maker orders: order_id -> order state. Orders only ever
+        # fill on market activity observed AFTER their placement timestamp.
+        self._working_orders: Dict[str, Dict[str, Any]] = {}
+        self._order_seq = 0
 
     # ------------------------------------------------------------------
     # Market data
@@ -94,19 +97,28 @@ class PaperFillSimulator:
             "asks": asks,
         }
 
-    def _fetch_klines(self, symbol: str, limit: int = 5) -> List[Dict[str, Any]]:
-        data = _http_get_json(f"{FAPI_BASE}/fapi/v1/klines?symbol={symbol}&interval=1m&limit={limit}")
+    def _fetch_trades(self, symbol: str, start_time_ms: int) -> List[Dict[str, Any]]:
+        """Real trades printed AFTER start_time_ms (aggTrades, time-ordered).
+
+        Each item: {"a": agg_trade_id, "price": float, "qty": float,
+        "ts_ms": int}. This is the honesty anchor: a working order can only
+        be filled by trades that happened after it was placed.
+        """
+        data = _http_get_json(
+            f"{FAPI_BASE}/fapi/v1/aggTrades?symbol={symbol}&startTime={start_time_ms}&limit=1000"
+        )
         if not data:
             return []
         out = []
-        for k in data:
+        for t in data:
             try:
                 out.append({
-                    "open": float(k[1]), "high": float(k[2]),
-                    "low": float(k[3]), "close": float(k[4]),
-                    "quote_volume": float(k[7]),
+                    "a": int(t["a"]),
+                    "price": float(t["p"]),
+                    "qty": float(t["q"]),
+                    "ts_ms": int(t["T"]),
                 })
-            except (IndexError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError):
                 continue
         return out
 
@@ -162,9 +174,9 @@ class PaperFillSimulator:
         return round(notional_usd * FUNDING_RATE_PER_INTERVAL, 4)
 
     # ------------------------------------------------------------------
-    # MAKER (post-only) simulation
+    # MAKER (post-only) working orders
     # ------------------------------------------------------------------
-    def simulate_maker_fill(
+    def place_maker_order(
         self,
         symbol: str,
         side: str,          # "BUY" or "SELL"
@@ -172,8 +184,12 @@ class PaperFillSimulator:
         limit_price: float,
         max_wait_sec: int = DEFAULT_MAKER_WAIT_SEC,
     ) -> Dict[str, Any]:
+        """Rest a post-only limit order. Returns WORKING (with order_id) or
+        REJECTED. Fills are discovered later via poll_maker_order(), which
+        only considers trades printed AFTER placement."""
         side = side.upper()
         now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        now_ms = int(time.time() * 1000)
 
         filters = self._filters_fetcher(symbol)
         if not filters:
@@ -193,7 +209,7 @@ class PaperFillSimulator:
         best_bid, best_ask = book["best_bid"], book["best_ask"]
 
         # Post-only (GTX) check: a real post-only order that would cross the
-        # touch is rejected by the exchange. No more "always fills".
+        # touch is rejected by the exchange.
         if side == "BUY" and limit_price >= best_ask:
             return self._rejected(symbol, side, quantity, limit_price,
                                  f"post_only_would_cross: limit {limit_price} >= ask {best_ask}", now_utc)
@@ -208,53 +224,146 @@ class PaperFillSimulator:
             if (side == "BUY" and p >= limit_price) or (side == "SELL" and p <= limit_price):
                 queue_ahead_usd += p * q
 
-        # Walk forward through recent 1m candles as a proxy fill path.
-        n_candles = max(2, min(10, math.ceil(max_wait_sec / 60) + 1))
-        candles = self._klines_fetcher(symbol, n_candles)
-        remaining = quantity
-        filled = 0.0
-        for c in candles:
-            if remaining <= 0:
-                break
-            # Trade-through required: buy fills only if price traded DOWN
-            # through our bid; sell fills only if price traded UP through it.
-            traded_through = (c["low"] <= limit_price) if side == "BUY" else (c["high"] >= limit_price)
-            if not traded_through:
-                continue
-            accessible_usd = c["quote_volume"] * VOLUME_SHARE
-            # Queue ahead depletes first; we only get what is left.
-            if queue_ahead_usd > 0:
-                absorbed = min(queue_ahead_usd, accessible_usd)
-                queue_ahead_usd -= absorbed
-                accessible_usd -= absorbed
-            fill_qty = min(remaining, self._round_to_step(accessible_usd / limit_price, step))
-            filled += fill_qty
-            remaining = self._round_to_step(quantity - filled, step)
-
-        filled = self._round_to_step(filled, step)
-        if filled <= 0:
-            return {
-                "status": "EXPIRED", "symbol": symbol, "side": side,
-                "requested_qty": quantity, "filled_qty": 0.0, "avg_price": limit_price,
-                "fee_usd": 0.0, "is_maker": True,
-                "reason": f"no_fill_within_{max_wait_sec}s: no trade-through with volume",
-                "timestamp_utc": now_utc,
-            }
-        notional = round(filled * limit_price, 2)
-        status = "FILLED" if remaining <= 0 else "PARTIAL"
+        self._order_seq += 1
+        order_id = f"paper_{now_ms}_{self._order_seq}"
+        self._working_orders[order_id] = {
+            "order_id": order_id,
+            "symbol": symbol,
+            "side": side,
+            "limit_price": limit_price,
+            "quantity": quantity,
+            "step": step,
+            "tick": tick,
+            "filled_qty": 0.0,
+            "remaining_qty": quantity,
+            "queue_ahead_usd": queue_ahead_usd,
+            "placed_ts_ms": now_ms,
+            "max_wait_sec": max_wait_sec,
+            "last_agg_id": -1,
+            "last_poll_ts_ms": 0,
+            "status": "WORKING",
+            "reason": None,
+        }
         return {
-            "status": status, "symbol": symbol, "side": side,
-            "requested_qty": quantity, "filled_qty": filled, "avg_price": limit_price,
-            "notional_usd": notional,
-            "fee_usd": self.compute_fee(notional, is_maker=True), "is_maker": True,
+            "status": "WORKING", "order_id": order_id, "symbol": symbol, "side": side,
+            "limit_price": limit_price, "requested_qty": quantity,
+            "filled_qty": 0.0, "remaining_qty": quantity,
+            "new_filled_qty": 0.0, "new_fee_usd": 0.0,
+            "avg_price": limit_price, "is_maker": True,
             "reason": None, "timestamp_utc": now_utc,
+        }
+
+    def poll_maker_order(self, order_id: str) -> Dict[str, Any]:
+        """Check a working order against real post-placement trades.
+
+        Only trades with agg id greater than the last one already processed
+        AND timestamp strictly after placement can fill the order. Returns
+        the cumulative state plus the incremental fill since the last poll
+        (new_filled_qty / new_fee_usd), so callers can bank partial fills.
+        """
+        now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        now_ms = int(time.time() * 1000)
+        order = self._working_orders.get(order_id)
+        if order is None:
+            return {"status": "UNKNOWN", "order_id": order_id,
+                    "filled_qty": 0.0, "remaining_qty": 0.0,
+                    "new_filled_qty": 0.0, "new_fee_usd": 0.0,
+                    "reason": "unknown_order_id", "timestamp_utc": now_utc}
+        if order["status"] in ("FILLED", "EXPIRED", "CANCELLED"):
+            snap = self._order_snapshot(order, 0.0, 0.0, now_utc)
+            return snap
+
+        # Throttle network polls to ~1/sec per order; callers tick every second.
+        # (Tests reset last_poll_ts_ms to 0 to poll deterministically.)
+        if now_ms - order["last_poll_ts_ms"] < 900:
+            return self._order_snapshot(order, 0.0, 0.0, now_utc)
+        order["last_poll_ts_ms"] = now_ms
+
+        new_fill = 0.0
+        try:
+            trades = self._trades_fetcher(order["symbol"], order["placed_ts_ms"])
+        except Exception as e:
+            logger.warning(f"[FILL-SIM] trades fetch failed for {order['symbol']}: {e}")
+            return self._order_snapshot(order, 0.0, 0.0, now_utc)
+
+        limit = order["limit_price"]
+        step = order["step"]
+        last_a = order["last_agg_id"]
+        max_a = last_a
+        for t in sorted(trades, key=lambda x: (x.get("ts_ms", 0), x.get("a", 0))):
+            a = int(t.get("a", -1))
+            if a <= last_a:
+                continue  # already processed on an earlier poll
+            max_a = max(max_a, a)
+            if int(t.get("ts_ms", 0)) <= order["placed_ts_ms"]:
+                continue  # honesty anchor: pre-placement activity never fills
+            px = float(t.get("price", 0.0))
+            qty = float(t.get("qty", 0.0))
+            if px <= 0 or qty <= 0:
+                continue
+            # Trade-through required: a buy limit fills only on prints at or
+            # below our bid; a sell limit only on prints at or above our ask.
+            hit = (px <= limit) if order["side"] == "BUY" else (px >= limit)
+            if not hit:
+                continue
+            accessible_usd = px * qty * VOLUME_SHARE
+            # Queue ahead depletes first; we only get what is left.
+            if order["queue_ahead_usd"] > 0:
+                absorbed = min(order["queue_ahead_usd"], accessible_usd)
+                order["queue_ahead_usd"] -= absorbed
+                accessible_usd -= absorbed
+            fill_qty = min(order["remaining_qty"], accessible_usd / limit)
+            if fill_qty > 0:
+                new_fill += fill_qty
+                order["remaining_qty"] -= fill_qty
+        order["last_agg_id"] = max_a
+        order["filled_qty"] = order["quantity"] - order["remaining_qty"]
+        if order["remaining_qty"] < 1e-12:
+            order["remaining_qty"] = 0.0
+            order["filled_qty"] = order["quantity"]
+            order["status"] = "FILLED"
+        elif now_ms - order["placed_ts_ms"] >= order["max_wait_sec"] * 1000:
+            order["status"] = "EXPIRED"
+            order["reason"] = (f"no_fill_within_{order['max_wait_sec']}s: "
+                               "no post-placement trade-through with volume")
+        elif new_fill > 0:
+            order["status"] = "PARTIAL"
+
+        new_fill = self._round_to_step(new_fill, step)
+        new_fee = self.compute_fee(round(new_fill * limit, 2), is_maker=True)
+        return self._order_snapshot(order, new_fill, new_fee, now_utc)
+
+    def cancel_maker_order(self, order_id: str) -> Dict[str, Any]:
+        now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        order = self._working_orders.get(order_id)
+        if order is None:
+            return {"status": "UNKNOWN", "order_id": order_id,
+                    "reason": "unknown_order_id", "timestamp_utc": now_utc}
+        if order["status"] == "WORKING" or order["status"] == "PARTIAL":
+            order["status"] = "CANCELLED"
+            order["reason"] = "cancelled_by_caller"
+        return self._order_snapshot(order, 0.0, 0.0, now_utc)
+
+    def _order_snapshot(self, order, new_filled_qty, new_fee_usd, now_utc):
+        return {
+            "status": order["status"], "order_id": order["order_id"],
+            "symbol": order["symbol"], "side": order["side"],
+            "limit_price": order["limit_price"],
+            "requested_qty": order["quantity"],
+            "filled_qty": round(order["filled_qty"], 8),
+            "remaining_qty": round(order["remaining_qty"], 8),
+            "new_filled_qty": new_filled_qty, "new_fee_usd": new_fee_usd,
+            "avg_price": order["limit_price"], "is_maker": True,
+            "reason": order.get("reason"), "timestamp_utc": now_utc,
         }
 
     def _rejected(self, symbol, side, quantity, limit_price, reason, now_utc):
         return {
             "status": "REJECTED", "symbol": symbol, "side": side,
-            "requested_qty": quantity, "filled_qty": 0.0, "avg_price": limit_price,
-            "fee_usd": 0.0, "is_maker": True, "reason": reason,
+            "requested_qty": quantity, "filled_qty": 0.0, "remaining_qty": quantity,
+            "new_filled_qty": 0.0, "new_fee_usd": 0.0,
+            "limit_price": limit_price, "avg_price": limit_price,
+            "is_maker": True, "reason": reason,
             "timestamp_utc": now_utc,
         }
 

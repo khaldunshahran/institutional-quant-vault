@@ -21,8 +21,31 @@ except ImportError:  # pragma: no cover - direct script execution
     from paper_fill_simulator import PaperFillSimulator
 
 class BinanceExecutionAdapter:
+    # Explicit opt-in for live trading. Live mode is REFUSED unless this
+    # exact value is set — merely having API keys in .env is not enough.
+    # The experiment NEVER runs live; this is a hard guardrail.
+    LIVE_CONFIRMATION_VALUE = "I_UNDERSTAND_THE_RISK"
+
+    @staticmethod
+    def live_trading_allowed() -> bool:
+        """True only when the user has explicitly confirmed live trading AND
+        API credentials are present. Everything else -> paper only."""
+        confirmed = (os.getenv("QUANT_VAULT_ENABLE_LIVE_TRADING", "").strip()
+                     == BinanceExecutionAdapter.LIVE_CONFIRMATION_VALUE)
+        key = os.getenv("BINANCE_API_KEY", "").strip()
+        secret = os.getenv("BINANCE_API_SECRET", "").strip()
+        return confirmed and len(key) > 10 and len(secret) > 10
+
     def __init__(self, mode: str = "paper", ledger_path: str = "runtime/binance_orders.json"):
-        self.mode = mode.lower() # "paper" or "live"
+        requested = mode.lower()
+        if requested == "live" and not BinanceExecutionAdapter.live_trading_allowed():
+            raise RuntimeError(
+                "LIVE mode REFUSED: set QUANT_VAULT_ENABLE_LIVE_TRADING="
+                f"'{BinanceExecutionAdapter.LIVE_CONFIRMATION_VALUE}' in the environment "
+                "AND provide BINANCE_API_KEY / BINANCE_API_SECRET. "
+                "Refusing to construct a live adapter — paper mode stays active."
+            )
+        self.mode = requested # "paper" or "live"
         self.ledger_path = Path(ledger_path)
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -75,12 +98,14 @@ class BinanceExecutionAdapter:
 
     def set_mode(self, mode: str) -> Dict[str, Any]:
         target = mode.lower()
-        if target == "live":
-            if not self.has_live_credentials():
-                return {
-                    "success": False,
-                    "error": "Cannot switch to LIVE: BINANCE_API_KEY and BINANCE_API_SECRET are missing from .env"
-                }
+        if target == "live" and not BinanceExecutionAdapter.live_trading_allowed():
+            return {
+                "success": False,
+                "error": ("Cannot switch to LIVE: set QUANT_VAULT_ENABLE_LIVE_TRADING="
+                          f"'{BinanceExecutionAdapter.LIVE_CONFIRMATION_VALUE}' in the environment "
+                          "and provide BINANCE_API_KEY / BINANCE_API_SECRET. "
+                          "Paper mode stays active — no live orders can be sent.")
+            }
         self.mode = target
         ledger = self._read_ledger()
         ledger["mode"] = self.mode
@@ -115,47 +140,89 @@ class BinanceExecutionAdapter:
         order_id = client_order_id or f"jev_{int(now*1000)}"
 
         # 1. PAPER EXECUTION — routed through the realistic fill simulator.
-        # Post-only maker: may be REJECTED (would cross), PARTIAL, or EXPIRED.
-        # No more instant fills at the requested price.
+        # Post-only maker orders are WORKING orders: they rest on the book
+        # and fill only on real post-placement market activity (checked via
+        # poll_maker_order by the trader loop). A single immediate poll is
+        # done here so synchronous callers (dashboard manual orders) get a
+        # truthful status; it is almost always WORKING at this point.
         if self.mode != "live":
             if order_type == "LIMIT_MAKER":
-                fill = self.fill_simulator.simulate_maker_fill(
+                placed = self.fill_simulator.place_maker_order(
                     symbol, side, quantity, price
                 )
+                if placed["status"] != "WORKING":
+                    return {
+                        "success": False,
+                        "error": f"Paper fill {placed['status']}: {placed.get('reason')}",
+                        "order": {
+                            "order_id": order_id,
+                            "symbol": symbol,
+                            "side": side,
+                            "status": placed["status"],
+                            "reason": placed.get("reason"),
+                            "execution_mode": "PAPER",
+                            "timestamp": now,
+                            "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)),
+                        },
+                    }
+                # One immediate honesty-preserving poll (only post-placement
+                # trades can fill; usually none exist yet -> WORKING).
+                try:
+                    fill = self.fill_simulator.poll_maker_order(placed["order_id"])
+                except Exception:
+                    fill = placed
+                fill_result = {
+                    "order_id": order_id,
+                    "paper_order_id": placed["order_id"],
+                    "symbol": symbol,
+                    "side": side,
+                    "status": fill["status"],  # WORKING / PARTIAL / FILLED
+                    "price": fill["limit_price"],
+                    "quantity": fill["filled_qty"],
+                    "requested_quantity": fill["requested_qty"],
+                    "notional_usd": round(fill["filled_qty"] * fill["limit_price"], 2),
+                    "fee_usd": float(fill.get("new_fee_usd", 0.0)),
+                    "fee_rate": "0.015% (Maker)",
+                    "execution_mode": "PAPER",
+                    "note": ("Working post-only order: fills are discovered by "
+                             "polling poll_maker_order against post-placement trades."),
+                    "timestamp": now,
+                    "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now))
+                }
             else:
                 fill = self.fill_simulator.simulate_taker_fill(
                     symbol, side, quantity
                 )
-            if fill["status"] in ("REJECTED", "EXPIRED") or fill["filled_qty"] <= 0:
-                return {
-                    "success": False,
-                    "error": f"Paper fill {fill['status']}: {fill.get('reason')}",
-                    "order": {
-                        "order_id": order_id,
-                        "symbol": symbol,
-                        "side": side,
-                        "status": fill["status"],
-                        "reason": fill.get("reason"),
-                        "execution_mode": "PAPER",
-                        "timestamp": now,
-                        "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)),
-                    },
+                if fill["status"] in ("REJECTED",) or fill["filled_qty"] <= 0:
+                    return {
+                        "success": False,
+                        "error": f"Paper fill {fill['status']}: {fill.get('reason')}",
+                        "order": {
+                            "order_id": order_id,
+                            "symbol": symbol,
+                            "side": side,
+                            "status": fill["status"],
+                            "reason": fill.get("reason"),
+                            "execution_mode": "PAPER",
+                            "timestamp": now,
+                            "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)),
+                        },
+                    }
+                fill_result = {
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "status": fill["status"],
+                    "price": fill["avg_price"],
+                    "quantity": fill["filled_qty"],
+                    "requested_quantity": fill["requested_qty"],
+                    "notional_usd": fill["notional_usd"],
+                    "fee_usd": fill["fee_usd"],
+                    "fee_rate": "0.045% (Taker)",
+                    "execution_mode": "PAPER",
+                    "timestamp": now,
+                    "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now))
                 }
-            fill_result = {
-                "order_id": order_id,
-                "symbol": symbol,
-                "side": side,
-                "status": fill["status"],  # FILLED or PARTIAL
-                "price": fill["avg_price"],
-                "quantity": fill["filled_qty"],
-                "requested_quantity": fill["requested_qty"],
-                "notional_usd": fill["notional_usd"],
-                "fee_usd": fill["fee_usd"],
-                "fee_rate": "0.015% (Maker)" if fill["is_maker"] else "0.045% (Taker)",
-                "execution_mode": "PAPER",
-                "timestamp": now,
-                "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now))
-            }
             # Record in paper ledger
             ledger = self._read_ledger()
             orders = ledger.get("orders", [])
