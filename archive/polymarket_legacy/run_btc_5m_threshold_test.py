@@ -38,7 +38,7 @@ def main() -> int:
 
     script = canonical_script()
     cmd = [
-        ".venv/bin/python",
+        sys.executable,
         script,
         "--profile",
         str(args.profile),

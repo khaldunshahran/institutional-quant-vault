@@ -1,117 +1,146 @@
-# 5min BTC Polymarket Skill
+# Institutional Quant Vault (TypeSafe Jev)
 
-Open-source OpenClaw skill for **BTC 5-minute Up/Down** markets on Polymarket.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Status](https://img.shields.io/badge/status-active-brightgreen.svg)]()
+[![License](https://img.shields.io/badge/license-Proprietary-red.svg)]()
 
-Repository: https://github.com/Novals83/5min-btc-polymarket
+Institutional-grade quantitative futures trading system operating across **Gold (XAU/PAXG), Bitcoin (BTC), and Binance Liquid Mega-Caps (ETH, SOL, AVAX, LINK, DOGE, XRP, LTC)**.
 
-## Strategy (Momentum into Close)
-This skill is aligned with a short-horizon momentum strategy:
+Designed around a **$100,000.00 USD Institutional Quant Vault** executing strict mathematical **"Profit or Fee-Protected Break-Even"** mechanics.
 
-1. Trade BTC 5m event markets near expiry.
-2. Main entry window: around **2 minutes left**.
-3. Confirm that BTC has already moved by about **$70-$100** in the active interval.
-4. Check market skew (crowd positioning). If flow supports the move direction, enter **with** momentum.
-5. Typical sizing: around **50% of trading allocation** (user-defined risk tolerance).
-6. Optional micro-hedge when skew is extreme (for example, 95/5): place a small opposite position ($1-$2 equivalent) to reduce tail risk.
+---
 
-This is a momentum-following approach, not a reversal strategy.
+## 🏛️ System Architecture
 
-## Repository Structure
-- `SKILL.md` — skill definition and operating rules
-- `config/` — profiles and risk parameters
-- `scripts/` — runners/wrappers/hot commands
-- `examples/` — practical command examples
+```
+                                  ┌───────────────────────────┐
+                                  │   Binance Live Market     │
+                                  │  (Futures & Spot Streams) │
+                                  └─────────────┬─────────────┘
+                                                │
+                 ┌──────────────────────────────┼──────────────────────────────┐
+                 ▼                              ▼                              ▼
+      ┌────────────────────┐         ┌────────────────────┐         ┌────────────────────┐
+      │  Order Book L2     │         │  Order Flow (CVD)  │         │  Session Clock     │
+      │  • Multi-Asset OBI │         │  • USD Notional    │         │  • NY Cash / London│
+      │  • Whale Walls     │         │  • Absorption/Trap │         │  • Liq Magnet Pools│
+      └──────────┬─────────┘         └──────────┬─────────┘         └──────────┬─────────┘
+                 │                              │                              │
+                 └──────────────────────────────┼──────────────────────────────┘
+                                                ▼
+                                  ┌───────────────────────────┐
+                                  │   TypeSafe Jev AI Brain   │
+                                  │  (Hurst, MAD, Kelly, O-U) │
+                                  └─────────────┬─────────────┘
+                                                │
+                                                ▼
+                                  ┌───────────────────────────┐
+                                  │  Autonomous Quant Vault   │
+                                  │  • Up to 15 Positions     │
+                                  │  • $10K Notional / 10x    │
+                                  │  • Early Break-Even       │
+                                  │  • Dynamic TP Trailing    │
+                                  └──────┬─────────────┬──────┘
+                                         │             │
+                    ┌────────────────────┘             └────────────────────┐
+                    ▼                                                       ▼
+      ┌───────────────────────────┐                           ┌───────────────────────────┐
+      │  Cockpit UI (Port 5000)   │                           │  Telegram 2-Way Command   │
+      │  • Real-time Radar        │                           │  • Live Trade Alerts      │
+      │  • Monte Carlo Sim        │                           │  • Remote Status Polling  │
+      └───────────────────────────┘                           └───────────────────────────┘
+```
 
-## Deploy / Run
+---
+
+## 🚀 Key Modules & Capabilities
+
+### 1. Autonomous Multi-Asset Trader (`scripts/autonomous_multi_asset_trader.py`)
+- **Bankroll**: $100,000.00 USD paper/live capital.
+- **Position Sizing**: $10,000 notional per trade ($1,000 margin @ 10x leverage).
+- **Concurrent Capacity**: Up to 15 simultaneous uncorrelated positions.
+- **Early Break-Even Ratchet**: Stop loss automatically moved to fee-protected break-even (+0.03% buffer) once trade advances +1.0 ATR (+0.60%).
+- **Fast TP1 Scale-Out**: Banks 50% profit at +0.80%–1.20% and guarantees zero risk for remainder.
+- **Trailing Runner**: Dynamic trailing stops on remaining 50% position.
+
+### 2. Multi-Symbol L2 Order Book Engine (`scripts/order_book_engine.py`)
+- Computes real-time Order Book Imbalance (OBI) across the top 50 bid/ask levels.
+- Fully isolated multi-symbol evaluation with localized caching (SOL, ETH, BTC, Gold, DOGE).
+- Detects institutional whale limit walls calibrated by asset market cap ($10M BTC, $4M ETH, $2M Gold, $1M liquid altcoins).
+
+### 3. Scale-Invariant Order Flow CVD Engine (`scripts/order_flow_engine.py`)
+- Calculates 5M and 15M Cumulative Volume Delta in quote asset (USDT notional).
+- Computes `delta_share_pct` and `taker_ratio_15m` for scale-invariant order flow analysis across all asset classes.
+- Detects institutional **Bullish Absorption** (bids soaking sell pressure) and **Bearish Exhaustion** (chasing pumps into liquidity).
+
+### 4. Institutional Session Clock & Liquidity Magnets (`scripts/session_clock_engine.py`)
+- Maps global UTC regimes: New York Cash Open (13:30–16:30 UTC), London Sweeps (07:00–10:30 UTC), Asia Range consolidation (00:00–06:00 UTC).
+- Projects short-squeeze and long-liquidation magnet pools around 24h highs and lows with adaptive decimal precision.
+
+### 5. Mathematical Quant Engine (`scripts/math_quant_engine.py`)
+- **Hurst Exponent ($H$)**: Multi-lag R/S regression classifying trending momentum ($H \ge 0.56$), mean-reverting chop ($H \le 0.44$), or random walk.
+- **Robust MAD Z-Score**: Outlier detection via Median Absolute Deviation ($1.4826 \times \text{MAD}$).
+- **Ornstein-Uhlenbeck Process**: Calculates continuous mean-reversion half-life ($\tau = \ln(2)/\theta$).
+- **Fractional Kelly Criterion**: Computes mathematically optimal position sizing.
+
+### 6. Monte Carlo 10,000-Run Strategy Simulator (`scripts/monte_carlo_engine.py`)
+- Simulates 10,000 stochastic 30-day trading paths.
+- Calibrated to the $100K Vault: +$2,000.00 daily profit target (+2.0%/day) and -$2,000.00 daily circuit breaker.
+- Demonstrates 77%+ probability of achieving daily profit targets with less than 5% maximum drawdown.
+
+---
+
+## 🛠️ Quick Start
+
 ### Prerequisites
-- OpenClaw environment
-- Polymarket execution stack available at:
-  - `<your-workspace>/pm-hl-conservative-plus-repo`
-- Python virtual env for runner scripts
-- Valid API credentials configured outside this repository
-
-### Quick Start
+- Python 3.10+
+- Virtual environment with dependencies:
 ```bash
-git clone https://github.com/Novals83/5min-btc-polymarket.git
-cd 5min-btc-polymarket
+python -m venv .venv
+.venv\Scripts\activate   # Windows
+# source .venv/bin/activate  # Linux/macOS
+pip install -r requirements.txt
 ```
 
-Read:
-- `SKILL.md`
-- `config/btc_5m_profiles.yaml`
-
-Run a conservative real test (example):
+### Running Tests
+Execute the comprehensive test suite (19 unit & integration tests):
 ```bash
-.venv/bin/python scripts/test_btc_5m_session_exit_sl.py --profile conservative --execute
+pytest tests/ -v
 ```
 
-Run aggressive profile:
+### Launching the Dashboard & Autopilot
 ```bash
-.venv/bin/python scripts/test_btc_5m_session_exit_sl.py --profile aggressive --execute
+python ui/server.py --port 5000
+```
+Open **`http://localhost:5000/`** to view the live radar, order book depth, CVD telemetry, active positions, and Monte Carlo simulator.
+
+---
+
+## 📂 Repository Layout
+```
+├── archive/
+│   └── polymarket_legacy/        # Preserved legacy 5m binary betting scripts
+├── config/                       # Strategy profiles & thresholds
+├── runtime/                      # Epistemic trade history & active state (git-ignored)
+├── scripts/
+│   ├── autonomous_multi_asset_trader.py  # Main $100K Quant Vault Daemon
+│   ├── binance_execution_adapter.py      # Binance Futures execution layer
+│   ├── binance_universe_scanner.py       # Multi-asset parallel scanner
+│   ├── economic_calendar_engine.py       # Tier-1 news blackout shield
+│   ├── episodic_memory_engine.py         # Continuous post-mortem learning
+│   ├── jev_decision_engine.py            # AI conviction & setup validator
+│   ├── math_quant_engine.py              # Hurst, MAD, Kelly, O-U math
+│   ├── monte_carlo_engine.py             # 10,000-run stochastic stress tester
+│   ├── order_book_engine.py              # L2 Depth & whale wall detector
+│   ├── order_flow_engine.py              # Real-time Spot & Perp CVD
+│   ├── session_clock_engine.py           # Liquidity magnet pool engine
+│   └── telegram_alert_bot.py             # Two-way remote telegram interface
+├── tests/                                # 100% passing pytest suite
+├── ui/                                   # Real-time WebSocket/REST Cockpit
+└── README.md
 ```
 
-Unified skill control (recommended):
-```bash
-scripts/btc5m_ctl.sh start --profile conservative
-scripts/btc5m_ctl.sh status
-scripts/btc5m_ctl.sh report --limit 20
-scripts/btc5m_ctl.sh stop
-```
+---
 
-Runtime isolation:
-- skill runtime dir: `./runtime`
-- auth/env source (default): `<your-workspace>/pm-hl-conservative-plus-repo/.env`
-- overrides: `BTC5M_REPO`, `BTC5M_ENV_FILE`, `BTC5M_RUNNER`
-- completion auto-report cron (topic 184): `btc5m-completion-autoreport-topic184`
-
-Optional Docker isolation:
-```bash
-scripts/btc5m_docker.sh up
-scripts/btc5m_docker.sh status
-scripts/btc5m_docker.sh down
-```
-
-## Execution Checklist (Before Live Trade)
-Use this quick pre-flight checklist before any real order:
-
-1. **Market validity**
-   - Confirm the BTC 5m market is active and not about to close unexpectedly.
-2. **Time-to-close window**
-   - Prefer entries around ~120 seconds left (with reasonable tolerance).
-3. **Impulse confirmation**
-   - Confirm the observed BTC move is meaningful (strategy reference: ~$70-$100).
-4. **Skew confirmation**
-   - Verify market skew supports the intended direction (do not fade strong momentum by default).
-5. **Liquidity/spread checks**
-   - Ensure spread and top-of-book notional pass your minimum thresholds.
-6. **Sizing guardrails**
-   - Validate stake, max notional, and daily loss limits before execution.
-7. **Stop / exit controls**
-   - Confirm stop-loss and `exit_before_sec` are configured.
-8. **Execution mode**
-   - Start in dry-run when changing parameters; switch to `--execute` only after validation.
-
-## Risk Controls Template
-Suggested baseline controls (adapt to your risk profile):
-
-- **Per-trade risk cap**: 1%-15% of account equity (profile dependent)
-- **Daily max loss**: hard stop at 10%-15%
-- **Max trades/day**: fixed ceiling to avoid overtrading
-- **Max notional/trade**: strict upper bound
-- **Quote staleness guard**: skip if market data is stale
-- **Spread guard**: skip when spread exceeds threshold
-- **Liquidity guard**: skip when top ask/bid notional is too thin
-- **Extreme skew hedge**: optional small opposite hedge in 95/5-type scenarios
-- **Operational kill switch**: immediate stop on repeated API/DNS/execution failures
-
-## Risk Notice
-This repository is educational/operational infrastructure, not financial advice.
-Use your own risk limits, daily loss caps, and capital controls.
-
-## Contributing
-- Fork the repository
-- Create a feature branch
-- Commit changes
-- Open a PR to `main`
-
-PRs are welcome.
+## 📜 Historical Evolution
+This codebase originated as an experimental 5-minute binary options algorithm for Polymarket. It has been completely re-architected into a multi-asset quantitative futures engine operating directly on Binance institutional liquidity. Legacy Polymarket components are archived in [`archive/polymarket_legacy/`](archive/polymarket_legacy/) for historical reference.

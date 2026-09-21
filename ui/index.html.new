@@ -1,0 +1,3350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jev AI — Institutional Multi-Asset Trading Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="style.css?v=pro_6">
+
+<style id='pro-terminal-styles'>
+.pro-terminal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* 1. TOP MARKET STATS & TICKER BAR */
+.terminal-market-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: #0b0f19;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px 22px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.market-identity {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.market-symbol-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.crypto-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(245, 158, 11, 0.05));
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+  font-size: 22px;
+  font-weight: 800;
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.15);
+}
+
+.market-pair {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  letter-spacing: -0.3px;
+}
+
+.badge-binary {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  border-radius: 4px;
+  padding: 2px 6px;
+  letter-spacing: 0.5px;
+}
+
+.market-sub-slug {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+.market-price-block {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  padding-left: 20px;
+}
+
+.price-main {
+  font-size: 26px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: #ffffff;
+  letter-spacing: -0.5px;
+}
+
+.price-delta-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.price-delta {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--emerald);
+}
+
+.price-open {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.market-micro-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.metric-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 8px 14px;
+  min-width: 105px;
+}
+
+.metric-cell.timer-cell {
+  background: rgba(6, 182, 212, 0.05);
+  border-color: rgba(6, 182, 212, 0.2);
+}
+
+.metric-cell.status-cell {
+  background: rgba(16, 185, 129, 0.05);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.metric-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+}
+
+.metric-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.timer-countdown {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--cyan);
+}
+
+.badge-online {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--emerald);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.badge-online::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--emerald);
+  box-shadow: 0 0 8px var(--emerald);
+}
+
+.metric-sub {
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+/* 2. MAIN WORKSPACE GRID */
+.terminal-workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr 370px;
+  gap: 16px;
+}
+
+@media (max-width: 1200px) {
+  .terminal-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.terminal-left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.terminal-right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 3. TERMINAL PANELS */
+.terminal-panel {
+  background: #0d121d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  position: relative;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.panel-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+.panel-dot.dot-cyan {
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+.ai-spark-icon {
+  font-size: 16px;
+  color: #f59e0b;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  letter-spacing: 0.6px;
+}
+
+.panel-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-regime {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.15);
+  color: var(--purple);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.tag-ev {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--emerald);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+/* 4. CHART PANEL */
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.color-up { background: var(--emerald); }
+.color-down { background: var(--rose); }
+.color-pulse { background: rgba(255, 255, 255, 0.3); }
+
+.chart-container {
+  width: 100%;
+  height: 200px;
+  position: relative;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+#jevImpulseCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Velocity Thrust Gauge Bar */
+.velocity-thrust-bar {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thrust-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.thrust-bear { color: var(--rose); }
+.thrust-center { color: var(--text-muted); }
+.thrust-bull { color: var(--emerald); }
+
+.thrust-track {
+  width: 100%;
+  height: 10px;
+  background: linear-gradient(90deg, rgba(244, 63, 94, 0.25) 0%, rgba(255, 255, 255, 0.04) 50%, rgba(16, 185, 129, 0.25) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  position: relative;
+  overflow: visible;
+}
+
+.thrust-zero-marker {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.4);
+  transform: translateX(-50%);
+}
+
+.thrust-indicator {
+  position: absolute;
+  top: -4px;
+  width: 8px;
+  height: 18px;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 0 10px #fff;
+  transform: translateX(-50%);
+  transition: left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* 5. AI SIGNAL DASHBOARD */
+.signal-dashboard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.signal-hero-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .signal-hero-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.signal-hero-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.signal-hero-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.signal-hero-action {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.3px;
+  color: #fff;
+  margin: 4px 0 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-hero-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.signal-metric-tile {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.metric-tile-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.metric-score-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.score-large {
+  font-size: 22px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: #fff;
+}
+
+.score-scale {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pro-progress-wrap {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 4px 0;
+}
+
+.pro-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--emerald));
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.pro-progress-bar.trap-bar {
+  background: linear-gradient(90deg, var(--emerald), var(--rose));
+}
+
+.metric-tile-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Regime Matrix Bar */
+.regime-matrix-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 800px) {
+  .regime-matrix-bar {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.regime-cell {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.regime-cell.active-regime {
+  background: rgba(168, 85, 247, 0.1);
+  border-color: var(--purple);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.15);
+}
+
+.regime-name {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+}
+
+.regime-prob {
+  font-size: 13px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: #fff;
+}
+
+.regime-bar-wrap {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.regime-bar-fill {
+  height: 100%;
+  background: var(--purple);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* AI Thesis Box */
+.ai-thesis-box {
+  background: rgba(6, 182, 212, 0.04);
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thesis-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thesis-icon {
+  font-size: 14px;
+}
+
+.thesis-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.thesis-content {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* 6. CLOB BOOK LADDER */
+.book-summary-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.book-summary-stats strong {
+  color: #fff;
+}
+
+.book-ladder-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+}
+
+.book-divider {
+  width: 1px;
+  height: 60px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.book-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.book-side-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.book-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.book-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.book-val {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* 7. ORDER TICKET (RIGHT COLUMN) */
+.ticket-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ticket-title {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #fff;
+}
+
+.ticket-mode-toggle {
+  display: flex;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.mode-pill {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-pill.active {
+  background: var(--cyan);
+  color: #07090e;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+}
+
+.bot-status-strip {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.status-indicator-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-stopped {
+  background: #64748b;
+}
+
+.dot-running {
+  background: var(--emerald);
+  box-shadow: 0 0 10px var(--emerald);
+  animation: pulse-dot 1.5s infinite;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.status-text-main {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.status-pid-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.ticket-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.form-label-row label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.label-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--cyan);
+  background: rgba(6, 182, 212, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.quick-stake-pills {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.stake-pill {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stake-pill:hover, .stake-pill.active {
+  background: rgba(6, 182, 212, 0.15);
+  border-color: var(--cyan);
+  color: #fff;
+}
+
+.stake-inputs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.stake-input-field {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.field-prefix {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.pro-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 8px 4px;
+  outline: none;
+}
+
+.pro-range {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.pro-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cyan);
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+.safety-rules-card {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.safety-rule-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-secondary);
+}
+
+.ticket-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.btn-pro-primary {
+  width: 100%;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 13px 18px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+  transition: all 0.2s ease;
+}
+
+.btn-pro-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+}
+
+.btn-pro-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-pro-danger {
+  width: 100%;
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: var(--rose);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.btn-pro-danger:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.25);
+  color: #fff;
+}
+
+.btn-pro-emergency {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed rgba(244, 63, 94, 0.3);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-pro-emergency:hover {
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.quick-eval-row {
+  margin-top: 4px;
+}
+
+.btn-pro-secondary {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-pro-secondary:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+/* Position Widget */
+.badge-flat {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+.position-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pos-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+
+.pos-label {
+  color: var(--text-secondary);
+}
+
+.pos-value {
+  font-weight: 700;
+  color: #fff;
+}
+
+/* 8. BOTTOM LEDGER PANEL */
+.ledger-header {
+  padding-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.ledger-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.ledger-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ledger-tab.active {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.ledger-right-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.btn-clear-feed {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-clear-feed:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.ledger-table-wrap {
+  width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+  overflow-x: auto;
+  margin-top: 10px;
+}
+
+.pro-ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-align: left;
+}
+
+.pro-ledger-table th {
+  position: sticky;
+  top: 0;
+  background: #090e17;
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  letter-spacing: 0.4px;
+}
+
+.pro-ledger-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+}
+
+.pro-ledger-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+  color: #fff;
+}
+
+.feed-placeholder-row td {
+  text-align: center;
+  padding: 30px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Decision Pills */
+.pill-action-buy-up {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 800;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--emerald);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.pill-action-buy-down {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 800;
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--rose);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.pill-action-pass {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+
+
+/* ==========================================================================
+   TARGET LADDER & DIRECTIONAL LONG/SHORT SIGNALS STYLES
+   ========================================================================== */
+
+.target-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .target-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.target-level-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.target-level-card:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.target-level-card.card-sl {
+  border-color: rgba(244, 63, 94, 0.3);
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.06), transparent);
+}
+
+.target-level-card.card-entry {
+  border-color: rgba(6, 182, 212, 0.3);
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.06), transparent);
+}
+
+.target-level-card.card-tp1 {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.06), transparent);
+}
+
+.target-level-card.card-tp2 {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.08), transparent);
+}
+
+.target-level-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.target-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.4px;
+}
+
+.badge-sl {
+  background: rgba(244, 63, 94, 0.2);
+  color: var(--rose);
+}
+
+.badge-entry {
+  background: rgba(6, 182, 212, 0.2);
+  color: var(--cyan);
+}
+
+.badge-tp1 {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--emerald);
+}
+
+.badge-tp2 {
+  background: rgba(52, 211, 153, 0.25);
+  color: #34d399;
+}
+
+.target-dist {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.target-price {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  margin: 2px 0;
+}
+
+.target-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Call Badges for Table */
+.pill-call-long {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 800;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--emerald);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.pill-call-short {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 800;
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--rose);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.pill-call-neutral {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+
+/* Pro Directional Execution Deck & Position Card */
+.auto-trade-toggle-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.auto-trade-toggle-wrap .toggle-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.auto-trade-toggle-wrap .toggle-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.pro-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+.pro-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.pro-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255, 255, 255, 0.15);
+  transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.pro-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #fff;
+  transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+input:checked + .pro-slider {
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  border-color: #10b981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+input:checked + .pro-slider:before {
+  transform: translateX(20px);
+}
+
+.directional-exec-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.btn-trade-long, .btn-trade-short {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: var(--font-main);
+  text-align: center;
+}
+.btn-trade-long {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.4));
+  border: 1.5px solid #10b981;
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.15);
+}
+.btn-trade-long:hover {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.35), rgba(5, 150, 105, 0.6));
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
+  transform: translateY(-1px);
+}
+.btn-trade-short {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(225, 29, 72, 0.4));
+  border: 1.5px solid #f43f5e;
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(244, 63, 94, 0.15);
+}
+.btn-trade-short:hover {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.35), rgba(225, 29, 72, 0.6));
+  box-shadow: 0 6px 20px rgba(244, 63, 94, 0.35);
+  transform: translateY(-1px);
+}
+.btn-trade-long:disabled, .btn-trade-short:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+.exec-icon {
+  font-size: 16px;
+  margin-bottom: 2px;
+}
+.exec-text {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+.exec-sub {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  opacity: 0.85;
+}
+
+/* Active Position Deck */
+.active-position-deck {
+  margin-bottom: 14px;
+}
+.no-pos-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.pos-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #06b6d4;
+  box-shadow: 0 0 8px #06b6d4;
+  animation: pulse-dot 1.5s infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse-dot {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.open-pos-card {
+  background: #0f172a;
+  border: 1.5px solid rgba(16, 185, 129, 0.4);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: fadeIn 0.3s ease-in;
+}
+.open-pos-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.pos-badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.badge-pos-side {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+.badge-pos-side.short {
+  background: rgba(244, 63, 94, 0.2);
+  color: #f43f5e;
+  border-color: rgba(244, 63, 94, 0.4);
+}
+.pos-timer {
+  font-size: 11px;
+  color: var(--muted);
+}
+.pos-pnl-wrap {
+  text-align: right;
+}
+.pos-pnl-val {
+  display: block;
+  font-size: 17px;
+  font-weight: 800;
+  color: #10b981;
+}
+.pos-pnl-val.negative {
+  color: #f43f5e;
+}
+.pos-roe-val {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pos-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 12px;
+  font-size: 11px;
+  margin-bottom: 12px;
+}
+.pos-m-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.pos-m-item .m-lbl {
+  color: var(--muted);
+}
+.pos-m-item .m-val {
+  font-weight: 700;
+  color: #fff;
+}
+
+.pos-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+.btn-close-pos {
+  width: 100%;
+  padding: 10px;
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.15), rgba(225, 29, 72, 0.25));
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: #f43f5e;
+  font-weight: 700;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-close-pos:hover {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.35), rgba(225, 29, 72, 0.45));
+  color: #fff;
+  border-color: #f43f5e;
+}
+
+/* Performance Strip */
+.perf-stats-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+.perf-stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.perf-stat-cell .perf-lbl {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.perf-stat-cell .perf-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+.perf-stat-cell.reset-cell {
+  justify-content: center;
+}
+.btn-reset-account {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--muted);
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.btn-reset-account:hover {
+  background: rgba(244, 63, 94, 0.2);
+  color: #f43f5e;
+  border-color: #f43f5e;
+}
+
+.ticket-secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.btn-copy-setup {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.btn-copy-setup:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+
+/* Candlestick Chart Styles */
+.candle-chart-panel {
+  margin-bottom: 16px;
+  background: #090e1a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.candle-interval-pills {
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+}
+.candle-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.candle-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.candle-pill.active {
+  background: rgba(6, 182, 212, 0.2);
+  border-color: #06b6d4;
+  color: #06b6d4;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.3);
+}
+
+.candle-ohlc-bar {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ohlc-item strong {
+  color: #fff;
+}
+
+.candle-chart-legend {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  pointer-events: none;
+  z-index: 10;
+}
+.legend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.legend-badge.entry { border-color: rgba(6, 182, 212, 0.5); color: #06b6d4; }
+.legend-badge.sl { border-color: rgba(244, 63, 94, 0.5); color: #f43f5e; }
+.legend-badge.tp1 { border-color: rgba(16, 185, 129, 0.5); color: #10b981; }
+.legend-badge.tp2 { border-color: rgba(52, 211, 153, 0.5); color: #34d399; }
+
+.leg-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.leg-dot.cyan { background: #06b6d4; box-shadow: 0 0 6px #06b6d4; }
+.leg-dot.rose { background: #f43f5e; box-shadow: 0 0 6px #f43f5e; }
+.leg-dot.emerald { background: #10b981; box-shadow: 0 0 6px #10b981; }
+.leg-dot.green { background: #34d399; box-shadow: 0 0 6px #34d399; }
+
+.fee-badge {
+  display: inline-block;
+  font-size: 10px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+}
+
+</style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- ==================== TOP NAVIGATION ==================== -->
+        <!-- ==================== TOP NAVIGATION ==================== -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="logo-icon">⚡</div>
+        <div class="brand-text">
+          <h1>JEV <span>AI</span></h1>
+          <p class="subtitle">Institutional Multi-Asset Terminal</p>
+        </div>
+      </div>
+
+      <!-- Live Binance Tickers Strip (BTC, ETH, SOL) -->
+      <div class="header-tickers-bar">
+        <div class="header-ticker-pill" id="hdrTickerBtc">
+          <span class="ticker-sym">BTC</span>
+          <span class="ticker-price font-mono" id="hdrPriceBtc">$---,---</span>
+          <span class="ticker-chg font-mono" id="hdrChgBtc">+0.0%</span>
+        </div>
+        <div class="header-ticker-pill" id="hdrTickerEth">
+          <span class="ticker-sym">ETH</span>
+          <span class="ticker-price font-mono" id="hdrPriceEth">$---.--</span>
+          <span class="ticker-chg font-mono" id="hdrChgEth">+0.0%</span>
+        </div>
+        <div class="header-ticker-pill" id="hdrTickerSol">
+          <span class="ticker-sym">SOL</span>
+          <span class="ticker-price font-mono" id="hdrPriceSol">$---.--</span>
+          <span class="ticker-chg font-mono" id="hdrChgSol">+0.0%</span>
+        </div>
+      </div>
+
+      <!-- Global Master Autopilot Control Strip -->
+      <div class="header-autopilot-bar">
+        <div class="autopilot-status-chip" id="hdrAutopilotChip">
+          <span class="autopilot-dot" id="hdrAutopilotDot"></span>
+          <span class="autopilot-label font-mono" id="hdrAutopilotStatus">AUTOPILOT: STANDBY</span>
+        </div>
+        <div class="pnl-chip">
+          <span class="pnl-label">DAILY PNL:</span>
+          <span class="pnl-val font-mono" id="hdrDailyPnl">$0.00</span>
+        </div>
+        <button id="btnHeaderAutopilotToggle" onclick="toggleMasterAutopilot()" class="btn-master-toggle">
+          ▶ START AUTOPILOT
+        </button>
+      </div>
+    </header>
+
+    <!-- Sub Navigation Tabs (4 Clean Dedicated Tabs) -->
+    <nav class="sub-nav">
+      <button class="tab-btn active" data-tab="long-short" onclick="switchTab('long-short')" id="nav-long-short">
+        <span class="tab-icon">🚀</span> Jev Multi-Asset Terminal
+      </button>
+      <button class="tab-btn" data-tab="screener" onclick="switchTab('screener')" id="nav-screener">
+        <span class="tab-icon">🌌</span> Binance Universe Screener
+      </button>
+      <button class="tab-btn" data-tab="cockpit" onclick="switchTab('cockpit')" id="nav-cockpit">
+        <span class="tab-icon">🎲</span> Polymarket 5M Binary
+      </button>
+      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')" id="nav-settings">
+        <span class="tab-icon">⚙️</span> Settings &amp; Risk
+      </button>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+
+      <!-- Persistent Bot Execution Error Banner -->
+      <div id="botErrorBanner" class="bot-error-banner" style="display: none;" aria-live="assertive">
+        <div class="bot-error-content">
+          <span class="bot-error-icon">🛑</span>
+          <div class="bot-error-msg" id="botErrorText">An error occurred during bot execution.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="dismissBotError()" aria-label="Dismiss error message">Dismiss ✕</button>
+      </div>
+
+      <!-- Telemetry Feed Staleness Alert Banner -->
+      <div id="feedStaleAlert" class="feed-stale-banner" style="display: none;" aria-live="polite">
+        <span class="stale-dot"></span>
+        <span id="feedStaleText">⚠️ Telemetry feed delayed. Live prices may be stale. Reconnecting to Binance &amp; Polymarket...</span>
+      </div>
+
+<section id="tab-long-short" class="tab-pane active">
+      <div class="pro-terminal">
+
+        <!-- 1. TOP TICKER BAR -->
+        <header class="terminal-market-bar">
+          <div class="market-identity">
+            <div class="market-symbol-wrap">
+              <span class="crypto-icon" style="background:linear-gradient(135deg,rgba(16,185,129,0.25),rgba(6,182,212,0.05)); border-color:rgba(16,185,129,0.35); color:#10b981;">⚡</span>
+              <div>
+                <div class="market-pair">BTC / USDT <span class="badge-binary" style="background:rgba(16,185,129,0.15); color:var(--emerald); border-color:rgba(16,185,129,0.3);">PERP & SPOT CALLS</span></div>
+                <div class="market-sub-slug">Binance Spot Velocity + Jev System One Brain</div>
+              </div>
+            </div>
+            <div class="market-price-block">
+              <div class="price-main" id="lsSpotPrice">$---,---.-</div>
+              <div class="price-delta-block">
+                <span class="price-delta" id="lsImpulseDelta">+$0.00</span>
+                <span class="price-open" id="lsOpenRef">5M Open: $---,---</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Micro Metrics -->
+          <div class="market-micro-metrics">
+            <div class="metric-cell">
+              <span class="metric-label">15s Velocity</span>
+              <span class="metric-value font-mono" id="lsVelocity">+0.0 $/s</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">Acceleration</span>
+              <span class="metric-value font-mono" id="lsAcceleration">+0.00 $/s²</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">Market Regime</span>
+              <span class="metric-value font-mono" id="lsRegimeTag" style="color:var(--purple);">Analyzing...</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">Signal Bias</span>
+              <span class="metric-value font-mono" id="lsBiasBadge" style="color:var(--cyan);">NEUTRAL</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">Binance OI (5M &Delta;)</span>
+              <span class="metric-value font-mono" id="lsOpenInterest">$8.75B <span style="font-size:10px; color:var(--emerald);" id="lsOiDelta">(+$0.0M)</span></span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">Coinbase Premium</span>
+              <span class="metric-value font-mono" id="lsCoinbasePremium">+$0.00</span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">Perp Funding</span>
+              <span class="metric-value font-mono" id="lsFundingRate">+0.0100%</span>
+            </div>
+            <div class="metric-cell status-cell">
+              <span class="metric-label">Engine Feed</span>
+              <span class="badge-online">Live & Streaming</span>
+              <span class="metric-sub font-mono"><1ms Feed / Sub-Sec AI</span>
+            </div>
+          </div>
+        </header>
+
+        
+        <!-- COLLAPSIBLE ADVANCED QUANT TELEMETRY DRAWER -->
+        <details style="background:rgba(15,23,42,0.6); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px 14px; margin-bottom:14px;">
+          <summary style="font-size:12px; font-weight:700; color:var(--cyan); cursor:pointer; user-select:none; display:flex; align-items:center; gap:6px;">
+            🔍 View Advanced Quant Telemetry (Order Flow CVD, Multi-Timeframe Radar, L2 Depth &amp; Deribit DVOL)
+          </summary>
+          <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+            <!-- MULTI-TIMEFRAME TREND & TECHNICAL RADAR (4H, 8H, 12H, 1W, 15M, 1M) -->
+        <div class="mtf-radar-panel" style="background:rgba(15,23,42,0.65); border:1px solid rgba(51,65,85,0.45); border-radius:12px; padding:10px 16px; margin-bottom:16px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-muted); font-weight:700;">Multi-Timeframe Radar:</span>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;" id="mtfBadgesContainer">
+              <span class="badge font-mono" id="mtfBadge1m" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">1M: --</span>
+              <span class="badge font-mono" id="mtfBadge15m" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">15M: --</span>
+              <span class="badge font-mono" id="mtfBadge4h" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">4H: --</span>
+              <span class="badge font-mono" id="mtfBadge8h" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">8H: --</span>
+              <span class="badge font-mono" id="mtfBadge12h" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">12H: --</span>
+              <span class="badge font-mono" id="mtfBadge1w" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">1W: --</span>
+            </div>
+          </div>
+          
+          <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:11px; color:var(--text-muted);">4H RSI:</span>
+              <span class="font-mono" id="mtfRsi4h" style="font-size:12px; font-weight:700; color:var(--text);">--</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:11px; color:var(--text-muted);">4H BB:</span>
+              <span class="font-mono" id="mtfBollinger4h" style="font-size:12px; font-weight:600; color:var(--text-muted);">%B: --</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:11px; color:var(--text-muted);">4H ATR:</span>
+              <span class="font-mono" id="mtfAtr4h" style="font-size:12px; font-weight:600; color:var(--amber);">±$---</span>
+            </div>
+            <div id="lsAutonomousAuthorityPill" style="display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:12px; background:rgba(139,92,246,0.15); border:1px solid rgba(139,92,246,0.4); color:var(--purple); font-size:11px; font-weight:600;">
+              <span>🤖 Dynamic Jev Authority: Active</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- GLOBAL MACRO & INSTITUTIONAL SESSION CLOCK BAR -->
+        <div class="macro-session-panel" style="background:rgba(15,23,42,0.85); border:1px solid rgba(245,158,11,0.3); border-radius:12px; padding:10px 16px; margin-bottom:12px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--amber); font-weight:700;">🌐 Global Macro:</span>
+            <span class="badge font-mono" id="macroGoldBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Gold: --</span>
+            <span class="badge font-mono" id="macroEthBtcBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">ETH/BTC: --</span>
+            <span class="badge font-mono" id="macroSolBtcBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">SOL/BTC: --</span>
+            <span class="badge font-mono" id="macroRegimeBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:var(--emerald); font-weight:700;">MACRO: --</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="badge font-mono" id="sessionClockBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.4); color:var(--blue); font-weight:700;">Session: --</span>
+            <span class="badge font-mono" id="liquidityMagnetBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Liquidity Pool: --</span>
+          </div>
+        </div>
+
+        <!-- QUANT MATHEMATICS & ORDER FLOW CVD SUPERPOWER RADAR -->
+        <div class="quant-superpower-panel" style="background:rgba(15,23,42,0.75); border:1px solid rgba(99,102,241,0.3); border-radius:12px; padding:10px 16px; margin-bottom:16px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:#a855f7; font-weight:700;">🔬 Quant Math & Order Flow:</span>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <span class="badge font-mono" id="quantHurstBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Hurst: --</span>
+              <span class="badge font-mono" id="quantOuBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">O-U: --</span>
+              <span class="badge font-mono" id="quantCvdBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">CVD 15M: --</span>
+              <span class="badge font-mono" id="quantDivAlertBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Flow: --</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="badge font-mono" id="quantEvBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:var(--emerald); font-weight:700;">EV: --</span>
+            <span class="badge font-mono" id="quantKellyBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Kelly: --</span>
+          </div>
+        </div>
+
+        <!-- L2 ORDER BOOK DEPTH, DERIBIT DVOL & ECONOMIC NEWS SHIELD RADAR -->
+        <div class="orderbook-dvol-news-panel" style="background:rgba(15,23,42,0.8); border:1px solid rgba(14,165,233,0.3); border-radius:12px; padding:10px 16px; margin-bottom:16px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--cyan); font-weight:700;">📖 L2 Depth & Whale Walls:</span>
+            <span class="badge font-mono" id="obObiBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">OBI: --</span>
+            <span class="badge font-mono" id="obDepthBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Depth ±0.8%: --</span>
+            <span class="badge font-mono" id="obWhaleWallBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">Whales: --</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="badge font-mono" id="dvolBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(234,179,8,0.15); border:1px solid rgba(234,179,8,0.4); color:var(--amber); font-weight:700;">⚡ DVOL: --</span>
+            <span class="badge font-mono" id="newsShieldBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:var(--emerald); font-weight:700;">🛡️ News Shield: Clear</span>
+          </div>
+        </div>
+
+        <!-- SMART MAKER EXECUTION, REGIME MODE & LEAD-LAG ARBITRAGE BAR -->
+        <div class="superpowers-deck-panel" style="background:rgba(15,23,42,0.85); border:1px solid rgba(168,85,247,0.35); border-radius:12px; padding:10px 16px; margin-bottom:16px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:#c084fc; font-weight:700;">⚡ Prop-Desk Execution:</span>
+            <span class="badge font-mono" id="smartExecBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:var(--emerald); font-weight:700;">⚡ SMART MAKER (POST-ONLY)</span>
+            <span class="badge font-mono" id="feeSavedBadge" style="padding:3px 8px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--emerald);">Fees Saved: +$0.00</span>
+            <span class="badge font-mono" id="strategyModeBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.4); color:var(--blue); font-weight:700;">MODE: TREND EXPANSION</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="badge font-mono" id="cbLeadBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--cyan);">🇺🇸 CB Lead: Spot-Perp Sync</span>
+            <span class="badge font-mono" id="memoryLessonBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(168,85,247,0.15); border:1px solid rgba(168,85,247,0.4); color:#c084fc; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="Episodic Memory Bank">🧠 Memory: Active</span>
+          </div>
+        </div>
+
+        
+        
+        <!-- Autopilot moved to top hero deck -->
+
+            <!-- STATUS BADGE & TOGGLE SWITCH -->
+            <div style="display:flex; align-items:center; gap:14px;">
+              <div id="autopilotStatusWrap" style="display:flex; align-items:center; gap:6px;">
+                <span id="autopilotPulse" style="width:10px; height:10px; border-radius:50%; background:#94a3b8; display:inline-block;"></span>
+                <span id="autopilotStatusText" style="font-size:12px; font-weight:700; color:#94a3b8;">AUTOPILOT: STOPPED</span>
+              </div>
+              <button id="btnToggleAutopilot" onclick="toggleMasterAutopilot()" class="btn" style="background:#4f46e5; color:#fff; font-size:12px; font-weight:800; padding:8px 18px; border-radius:8px; border:none; cursor:pointer; box-shadow:0 4px 14px rgba(79,70,229,0.4); transition:all 0.2s ease;">
+                ▶ START AUTOPILOT
+              </button>
+            </div>
+          </div>
+
+          <!-- ACTIVE POSITIONS MATRIX ROW -->
+          <div id="autopilotPositionsWrap" style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.08); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <div style="font-size:11px; color:var(--text-muted);">
+              Active Positions: <span id="autopilotPosCount" style="color:#fff; font-weight:700;">0 / 3</span> | Daily PnL: <span id="autopilotDailyPnl" style="font-weight:700; color:var(--emerald);">$0.00</span>
+            </div>
+            <div id="autopilotPositionsList" style="display:flex; gap:8px; flex-wrap:wrap;">
+              <span style="font-size:11px; color:var(--text-muted); font-style:italic;">No active positions. Standby...</span>
+            </div>
+          </div>
+
+        <!-- Screener extracted to tab-screener -->
+
+        <!-- MULTI-ASSET SCANNER & LIQUIDATION CASCADE RADAR -->
+        <div class="multi-asset-liquidation-panel" style="background:rgba(15,23,42,0.85); border:1px solid rgba(236,72,153,0.35); border-radius:12px; padding:10px 16px; margin-bottom:16px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:#f472b6; font-weight:700;">🌐 Multi-Asset Scanner:</span>
+            <span class="badge font-mono" id="scannerBtcBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); color:var(--amber); font-weight:700;">BTC: --</span>
+            <span class="badge font-mono" id="scannerEthBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">ETH: --</span>
+            <span class="badge font-mono" id="scannerSolBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(30,41,59,0.7); border:1px solid rgba(100,116,139,0.3); color:var(--text-muted);">SOL: --</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="badge font-mono" id="liqCascadeBadge" style="padding:3px 10px; font-size:11px; border-radius:6px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:var(--emerald); font-weight:700;">🌊 Liq Pools: Stable</span>
+            <button id="btnRunMonteCarlo" class="btn btn-secondary" style="padding:4px 10px; font-size:11px; border-radius:6px; background:rgba(99,102,241,0.2); border:1px solid rgba(99,102,241,0.5); color:#a5b4fc; cursor:pointer;" onclick="runMonteCarloSimulation()">🎲 10k Monte Carlo Sim</button>
+            <button id="btnTestTelegram" class="btn btn-secondary" style="padding:4px 10px; font-size:11px; border-radius:6px; background:rgba(59,130,246,0.2); border:1px solid rgba(59,130,246,0.5); color:#93c5fd; cursor:pointer;" onclick="testTelegramAlert()">📱 Telegram Alert</button>
+          </div>
+        </div>
+        </details>
+        
+        <!-- 2. MAIN WORKSPACE (2-COLUMN GRID) -->
+        <div class="terminal-workspace-grid">
+
+          <!-- LEFT COLUMN: SIGNALS & TARGET LADDER (68% width) -->
+          <div class="terminal-left-column">
+
+            <!-- HERO DIRECTIONAL SIGNAL CARD -->
+            <div class="terminal-panel ai-signal-panel">
+              <div class="panel-header">
+                <div class="panel-title-wrap">
+                  <span class="ai-spark-icon">🎯</span>
+                  <span class="panel-title">Institutional Directional Trade Signal</span>
+                </div>
+                <div class="panel-tags">
+                  <span class="tag-regime" id="lsSignalRegime">Regime: Scanning</span>
+                  <span class="tag-ev" id="lsExpectancyBadge">High R:R Ratio</span>
+                </div>
+              </div>
+
+              <div class="signal-dashboard-body">
+                <div class="signal-hero-row">
+                  <div class="signal-hero-card" id="lsHeroCard" style="border-width: 2px;">
+                    <div class="signal-hero-label">CURRENT ACTIVE CALL</div>
+                    <div class="signal-hero-action" id="lsActionHero">NEUTRAL STANDBY</div>
+                    <div class="signal-hero-sub" id="lsActionSub">Awaiting high-conviction breakout or mispricing setup</div>
+                  </div>
+
+                  <div class="signal-metric-tile">
+                    <div class="metric-tile-title">CONVICTION & CONFIDENCE</div>
+                    <div class="metric-score-row">
+                      <span class="score-large" id="lsConvictionScore">--</span>
+                      <span class="score-scale">/ 5.0 Rating</span>
+                    </div>
+                    <div class="pro-progress-wrap">
+                      <div class="pro-progress-bar" id="lsConfidenceBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="metric-tile-sub font-mono" id="lsConfidenceText">Confidence: --%</div>
+                  </div>
+
+                  <div class="signal-metric-tile">
+                    <div class="metric-tile-title">RISK / REWARD RATIO</div>
+                    <div class="metric-score-row">
+                      <span class="score-large text-cyan" id="lsRrRatio">1 : 2.5</span>
+                      <span class="score-scale">Target R:R</span>
+                    </div>
+                    <div class="pro-progress-wrap">
+                      <div class="pro-progress-bar" style="width: 80%; background: linear-gradient(90deg, var(--cyan), var(--emerald));"></div>
+                    </div>
+                    <div class="metric-tile-sub">Asymmetric Edge Setup</div>
+                  </div>
+                </div>
+
+                <!-- AI Rationale Box -->
+                <div class="ai-thesis-box">
+                  <div class="thesis-header">
+                    <span class="thesis-icon">💬</span>
+                    <span class="thesis-title">Jev Autonomous Directional Thesis</span>
+                  </div>
+                  <p class="thesis-content font-mono" id="lsThesisText">Evaluating real-time Binance spot tick velocity, acceleration, and orderbook pressure...</p>
+                </div>
+              </div>
+            </div>
+
+                        <!-- LIVE BTC CANDLESTICK CHART PANEL -->
+            <div class="terminal-panel candle-chart-panel" id="lsCandleCard">
+              <div class="panel-header" style="padding: 10px 16px;">
+                <div class="panel-title-wrap">
+                  <span class="crypto-icon" style="width:22px; height:22px; font-size:12px; border-radius:4px; background:rgba(6,182,212,0.15); border-color:rgba(6,182,212,0.3); color:#06b6d4;">📊</span>
+                  <span class="panel-title">BTC/USDT Real-Time Candlestick Chart</span>
+                  <div class="candle-interval-pills">
+                    <button type="button" class="candle-pill" id="btnCandle1m" onclick="setCandleInterval('1m')">1M</button>
+                    <button type="button" class="candle-pill active" id="btnCandle5m" onclick="setCandleInterval('5m')">5M</button>
+                    <button type="button" class="candle-pill" id="btnCandle15m" onclick="setCandleInterval('15m')">15M</button>
+                  </div>
+                </div>
+                <div class="candle-ohlc-bar font-mono" id="lsCandleOhlc">
+                  <span class="ohlc-item">O: <strong id="ohlcOpen">$0.0</strong></span>
+                  <span class="ohlc-item">H: <strong id="ohlcHigh">$0.0</strong></span>
+                  <span class="ohlc-item">L: <strong id="ohlcLow">$0.0</strong></span>
+                  <span class="ohlc-item">C: <strong id="ohlcClose">$0.0</strong></span>
+                </div>
+              </div>
+
+              <div class="candle-canvas-container" style="position:relative; width:100%; height:300px; background:#070b14; border-radius:0 0 10px 10px; overflow:hidden;">
+                <canvas id="lsCandleCanvas" style="width:100%; height:100%; display:block;"></canvas>
+                <!-- Dynamic Trade Overlay Legend -->
+                <div class="candle-chart-legend font-mono" id="lsChartLegend">
+                  <span class="legend-badge entry" id="legendEntry" style="display:none;"><span class="leg-dot cyan"></span> ENTRY: <span id="legEntryVal">$0.0</span></span>
+                  <span class="legend-badge sl" id="legendSl" style="display:none;"><span class="leg-dot rose"></span> SL: <span id="legSlVal">$0.0</span></span>
+                  <span class="legend-badge tp1" id="legendTp1" style="display:none;"><span class="leg-dot emerald"></span> TP1: <span id="legTp1Val">$0.0</span></span>
+                  <span class="legend-badge tp2" id="legendTp2" style="display:none;"><span class="leg-dot green"></span> TP2: <span id="legTp2Val">$0.0</span></span>
+                </div>
+              </div>
+            </div>
+
+<!-- DYNAMIC TARGET PRICE LADDER (ENTRY, SL, TP1, TP2) -->
+            <div class="terminal-panel target-ladder-panel">
+              <div class="panel-header">
+                <div class="panel-title-wrap">
+                  <span class="panel-dot dot-cyan"></span>
+                  <span class="panel-title">Dynamic Execution Levels & Profit Targets</span>
+                </div>
+                <div class="font-mono text-muted" style="font-size: 11px;">Calculated dynamically from spot volatility</div>
+              </div>
+
+              <div class="target-cards-grid">
+                <!-- Stop Loss Card -->
+                <div class="target-level-card card-sl">
+                  <div class="target-level-header">
+                    <span class="target-badge badge-sl">STOP LOSS (INVALIDATION)</span>
+                    <span class="target-dist text-rose font-mono" id="lsSlDistance">-$0.0</span>
+                  </div>
+                  <div class="target-price font-mono text-rose" id="lsStopLossPrice">$0.00</div>
+                  <div class="target-desc">Hard exit level if market breaks structure against position</div>
+                </div>
+
+                <!-- Entry Zone Card -->
+                <div class="target-level-card card-entry">
+                  <div class="target-level-header">
+                    <span class="target-badge badge-entry">SUGGESTED ENTRY ZONE</span>
+                    <span class="target-dist text-cyan font-mono">Market / Limit</span>
+                  </div>
+                  <div class="target-price font-mono text-cyan" id="lsEntryZonePrice">$0.00 - $0.00</div>
+                  <div class="target-desc">Optimal range to scale into position on minor pullbacks</div>
+                </div>
+
+                <!-- Take Profit 1 Card -->
+                <div class="target-level-card card-tp1">
+                  <div class="target-level-header">
+                    <span class="target-badge badge-tp1">TAKE PROFIT 1 (SCALP)</span>
+                    <span class="target-dist text-emerald font-mono" id="lsTp1Distance">+$0.0</span>
+                  </div>
+                  <div class="target-price font-mono text-emerald" id="lsTp1Price">$0.00</div>
+                  <div class="target-desc">1:1.5 R:R target — lock in 50% to 70% of position size</div>
+                </div>
+
+                <!-- Take Profit 2 Card -->
+                <div class="target-level-card card-tp2">
+                  <div class="target-level-header">
+                    <span class="target-badge badge-tp2">TAKE PROFIT 2 (RUNNER)</span>
+                    <span class="target-dist font-mono" style="color:#34d399;" id="lsTp2Distance">+$0.0</span>
+                  </div>
+                  <div class="target-price font-mono" style="color:#34d399;" id="lsTp2Price">$0.00</div>
+                  <div class="target-desc">1:3.0 R:R runner target — ride high momentum trend breakout</div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- RIGHT COLUMN: POSITION & LEVERAGE CALCULATOR (32% width) -->
+          <div class="terminal-right-column">
+
+            <div class="terminal-panel order-ticket-panel">
+              <div class="ticket-header">
+                <div class="ticket-title">PRO POSITION & LEVERAGE SIZER</div>
+                <span class="label-badge">Institutional Math</span>
+              </div>
+
+              <!-- Calculator Form -->
+              <div class="ticket-form">
+                <!-- Account Balance -->
+                <div class="form-group">
+                  <div class="form-label-row">
+                    <label>Account Balance ($ USD)</label>
+                  </div>
+                  <div class="stake-input-field">
+                    <span class="field-prefix">$</span>
+                    <input type="number" id="calcBalanceInput" value="1000" min="10" max="1000000" step="50" class="pro-input">
+                  </div>
+                </div>
+
+                <!-- Risk per trade -->
+                <div class="form-group">
+                  <div class="form-label-row">
+                    <label>Risk Per Trade (% or $)</label>
+                    <span class="form-val font-mono" id="calcRiskPctLabel">2.0%</span>
+                  </div>
+                  <div class="quick-stake-pills">
+                    <button type="button" class="stake-pill" onclick="setCalcRisk(1)">1%</button>
+                    <button type="button" class="stake-pill active" onclick="setCalcRisk(2)">2%</button>
+                    <button type="button" class="stake-pill" onclick="setCalcRisk(3)">3%</button>
+                    <button type="button" class="stake-pill" onclick="setCalcRisk(5)">5%</button>
+                  </div>
+                </div>
+
+                <!-- Leverage Selector -->
+                <div class="form-group">
+                  <div class="form-label-row">
+                    <label>Perp Leverage</label>
+                    <span class="form-val font-mono" id="calcLeverageLabel">10x</span>
+                  </div>
+                  <div class="quick-stake-pills">
+                    <button type="button" class="stake-pill" onclick="setCalcLev(5)">5x</button>
+                    <button type="button" class="stake-pill active" onclick="setCalcLev(10)">10x</button>
+                    <button type="button" class="stake-pill" onclick="setCalcLev(20)">20x</button>
+                    <button type="button" class="stake-pill" onclick="setCalcLev(50)">50x</button>
+                  </div>
+                  <input type="range" id="calcLeverageSlider" min="1" max="50" value="10" class="pro-range" oninput="setCalcLev(this.value)">
+                </div>
+
+                <!-- Calculated Output Card -->
+                <div class="safety-rules-card" style="background:rgba(6,182,212,0.04); border-color:rgba(6,182,212,0.2);">
+                  <div class="safety-rule-row">
+                    <span>Max Dollar Risk:</span>
+                    <strong class="text-rose font-mono" id="calcMaxRiskDollars">$20.00</strong>
+                  </div>
+                  <div class="safety-rule-row">
+                    <span>Position Size (USD):</span>
+                    <strong class="text-cyan font-mono" id="calcPositionUsd">$1,250.00</strong>
+                  </div>
+                  <div class="safety-rule-row">
+                    <span>Position Size (BTC):</span>
+                    <strong class="text-primary font-mono" id="calcPositionBtc">0.0154 BTC</strong>
+                  </div>
+                  <div class="safety-rule-row">
+                    <span>Est. Margin Required:</span>
+                    <strong class="text-primary font-mono" id="calcMarginReq">$125.00</strong>
+                  </div>
+                  <div class="safety-rule-row">
+                    <span>Est. Liquidation Distance:</span>
+                    <strong class="text-emerald font-mono" id="calcLiqDistance">-8.5% Buffer</strong>
+                  </div>
+                  <div class="safety-rule-row">
+                    <span>Potential Profit (TP1):</span>
+                    <strong class="text-emerald font-mono" id="calcProfitTp1">+$30.00 (+150%)</strong>
+                  </div>
+                  <div class="safety-rule-row">
+                    <span>Potential Profit (TP2):</span>
+                    <strong class="text-emerald font-mono" id="calcProfitTp2">+$60.00 (+300%)</strong>
+                  </div>
+                </div>
+
+                <!-- Auto-Trade Toggle -->
+                <div class="auto-trade-toggle-wrap">
+                  <div class="toggle-info">
+                    <span class="toggle-title">🤖 Auto-Trade Jev Signals</span>
+                    <span class="toggle-sub" id="lsAutoTradeStatus">Auto-enters on high conviction (≥70%)</span>
+                  </div>
+                  <label class="pro-switch">
+                    <input type="checkbox" id="lsAutoTradeSwitch" onchange="toggleDirectionalAutoTrade(this.checked)">
+                    <span class="pro-slider"></span>
+                  </label>
+                </div>
+
+                <!-- 1-Click Execution CTAs -->
+                <div class="directional-exec-buttons">
+                  <button type="button" class="btn-trade-long" id="btnOpenLong" onclick="openDirectionalTrade('LONG')">
+                    <span class="exec-icon">🚀</span>
+                    <span class="exec-text">Open LONG</span>
+                    <span class="exec-sub" id="btnLongSub">Size $1,250</span>
+                  </button>
+                  <button type="button" class="btn-trade-short" id="btnOpenShort" onclick="openDirectionalTrade('SHORT')">
+                    <span class="exec-icon">🔻</span>
+                    <span class="exec-text">Open SHORT</span>
+                    <span class="exec-sub" id="btnShortSub">Size $1,250</span>
+                  </button>
+                </div>
+
+                <!-- Live Active Position Deck -->
+                <div class="active-position-deck" id="activePositionDeck">
+                  <div id="noPositionBlock" class="no-pos-banner">
+                    <span class="pos-pulse-dot"></span>
+                    <span>No Open Position • Standby for 1-Click Execution or Auto-Signal</span>
+                  </div>
+
+                  <div id="openPositionCard" class="open-pos-card" style="display:none;">
+                    <div class="open-pos-header">
+                      <div class="pos-badge-wrap">
+                        <span class="badge-pos-side" id="posSideBadge">LONG 20x</span>
+                        <span class="pos-timer font-mono" id="posDuration">00:00</span>
+                      </div>
+                      <div class="pos-pnl-wrap">
+                        <span class="pos-pnl-val font-mono" id="posUnrealizedPnl">+$0.00</span>
+                        <div style="display:flex; align-items:center; justify-content:flex-end;">
+                          <span class="pos-roe-val font-mono" id="posRoePct">(+0.00% Net ROE)</span>
+                          <span class="fee-badge font-mono" id="posFeeBadge">-$0.00 Fees</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="pos-metrics-grid font-mono">
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Entry Price</span>
+                        <span class="m-val" id="posEntryPrice">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Mark Price</span>
+                        <span class="m-val" id="posMarkPrice">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Position Size</span>
+                        <span class="m-val" id="posSizeUsd">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Allocated Margin</span>
+                        <span class="m-val" id="posMargin">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Stop Loss</span>
+                        <span class="m-val text-rose" id="posStopLoss">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Take Profit 1</span>
+                        <span class="m-val text-emerald" id="posTp1">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Take Profit 2</span>
+                        <span class="m-val text-emerald" id="posTp2">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Est. Liquidation</span>
+                        <span class="m-val text-warning" id="posLiqPrice">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Gross PnL</span>
+                        <span class="m-val" id="posGrossPnl">$0.00</span>
+                      </div>
+                      <div class="pos-m-item">
+                        <span class="m-lbl">Round-Trip Fees</span>
+                        <span class="m-val text-amber font-mono" id="posTotalFees">$0.00</span>
+                      </div>
+                    </div>
+
+                    <div class="pos-footer-actions">
+                      <button type="button" class="btn-close-pos" id="btnClosePosition" onclick="closeDirectionalTrade()">
+                        ⚡ Close Position (Market Exit)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- DAILY GOAL ACCUMULATOR & CIRCUIT BREAKER STRIP -->
+                <div class="daily-goal-card" style="background:rgba(15,23,42,0.85); border:1px solid rgba(139,92,246,0.35); border-radius:10px; padding:10px 14px; margin-bottom:12px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <span style="font-size:12px; font-weight:700; color:var(--purple);">🎯 Daily Target: €100 ($110)</span>
+                      <span class="badge font-mono" id="dailyGoalStanceBadge" style="font-size:10px; padding:2px 6px; border-radius:4px; background:rgba(99,102,241,0.2); color:#a5b4fc; border:1px solid rgba(99,102,241,0.4);">⚡ Asymmetric Hunter</span>
+                    </div>
+                    <span class="font-mono" id="dailyGoalPnlText" style="font-size:12px; font-weight:700; color:var(--emerald);">$0.00 / $110.00 (0.0%)</span>
+                  </div>
+                  <!-- Progress Bar -->
+                  <div style="width:100%; height:6px; background:rgba(30,41,59,0.8); border-radius:3px; overflow:hidden; margin-bottom:6px;">
+                    <div id="dailyGoalProgressBar" style="width:0%; height:100%; background:linear-gradient(90deg, #8b5cf6, #10b981); transition:width 0.4s ease;"></div>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; color:var(--text-muted);">
+                    <span id="dailyCircuitBreakerStatus">🛡️ Circuit Breaker: Safe (Max Loss -$40)</span>
+                    <span id="dailyPatienceStatus">💡 Patience Rule: 0 trades on flat chop</span>
+                  </div>
+                </div>
+
+                <!-- Performance Strip -->
+                <div class="perf-stats-strip">
+                  <div class="perf-stat-cell">
+                    <span class="perf-lbl">Paper Balance</span>
+                    <span class="perf-val font-mono text-emerald" id="lsPaperBalance">$1,000.00</span>
+                  </div>
+                  <div class="perf-stat-cell">
+                    <span class="perf-lbl">Realized PnL</span>
+                    <span class="perf-val font-mono" id="lsNetRealizedPnl">$0.00</span>
+                  </div>
+                  <div class="perf-stat-cell">
+                    <span class="perf-lbl">Win Rate</span>
+                    <span class="perf-val font-mono" id="lsWinRate">0.0% (0/0)</span>
+                  </div>
+                  <div class="perf-stat-cell reset-cell">
+                    <button type="button" class="btn-reset-account" onclick="resetDirectionalAccount()" title="Reset Paper Balance to $1,000">Reset</button>
+                  </div>
+                </div>
+
+                <!-- Quick Copy & Refresh -->
+                <div class="ticket-secondary-actions">
+                  <button type="button" class="btn-copy-setup" onclick="copySignalSetup()">
+                    📋 Copy Setup
+                  </button>
+                  <button type="button" class="btn-copy-setup" id="btnRefreshLongShort" onclick="fetchJevLongShortTelemetry()">
+                    🔄 Refresh
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- 3. BOTTOM STREAMING CALLS & CLOSED TRADES LEDGER -->
+        <div class="terminal-panel ledger-panel">
+          <div class="panel-header ledger-header">
+            <div class="ledger-tabs">
+              <button type="button" class="ledger-tab active" id="btnLedgerSignals" onclick="switchLongShortLedgerTab('signals')">⚡ Live Directional Signal Stream</button>
+              <button type="button" class="ledger-tab" id="btnLedgerTrades" onclick="switchLongShortLedgerTab('trades')">📜 Executed Trades & Closed PnL (<span id="lsClosedTradeCount">0</span>)</button>
+            </div>
+            <div class="ledger-right-info font-mono">
+              <span id="lsLedgerStatusText">Streaming signals every ~1.5s</span>
+              <button type="button" class="btn-clear-feed" onclick="clearActiveLedgerFeed()">Clear</button>
+            </div>
+          </div>
+
+          <!-- Signal Stream Table Wrap -->
+          <div class="ledger-table-wrap" id="lsSignalStreamWrap">
+            <table class="pro-ledger-table">
+              <thead>
+                <tr>
+                  <th>TIME (UTC)</th>
+                  <th>CALL TYPE</th>
+                  <th>SPOT AT SIGNAL</th>
+                  <th>ENTRY ZONE</th>
+                  <th>STOP LOSS</th>
+                  <th>TAKE PROFIT 1</th>
+                  <th>TAKE PROFIT 2</th>
+                  <th>R:R RATIO</th>
+                  <th>CONVICTION</th>
+                  <th>RATIONALE / ANALYSIS</th>
+                </tr>
+              </thead>
+              <tbody id="lsSignalFeedList">
+                <tr class="feed-placeholder-row">
+                  <td colspan="10">Waiting for live Long/Short directional signals...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Closed Trades Table Wrap -->
+          <div class="ledger-table-wrap" id="lsClosedTradesWrap" style="display:none;">
+            <table class="pro-ledger-table">
+              <thead>
+                <tr>
+                  <th>CLOSED (UTC)</th>
+                  <th>SIDE</th>
+                  <th>ENTRY</th>
+                  <th>EXIT</th>
+                  <th>LEVERAGE</th>
+                  <th>MARGIN</th>
+                  <th>FEES (TAKER)</th>
+                  <th>NET REALIZED PNL</th>
+                  <th>NET ROE %</th>
+                  <th>DURATION</th>
+                  <th>EXIT REASON</th>
+                </tr>
+              </thead>
+              <tbody id="lsClosedTradesList">
+                <tr class="feed-placeholder-row">
+                  <td colspan="10">No closed directional trades yet. Click Open LONG or Open SHORT to execute your first trade!</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+<section id="tab-screener" class="tab-pane">
+      <div style="max-width:1600px; margin:0 auto; display:flex; flex-direction:column; gap:16px;">
+        <header class="terminal-market-bar" style="background:linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,27,75,0.7)); border:1px solid rgba(245,158,11,0.3); padding:16px 22px; border-radius:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap; gap:14px;">
+            <div style="display:flex; align-items:center; gap:14px;">
+              <span class="crypto-icon" style="background:rgba(245,158,11,0.15); border-color:rgba(245,158,11,0.4); color:#f59e0b; font-size:24px;">🌌</span>
+              <div>
+                <div style="font-size:18px; font-weight:800; color:#fff; display:flex; align-items:center; gap:8px;">
+                  Binance Universe Alpha Screener <span class="badge" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4); font-size:11px;">300+ Pairs (&gt;$50M Volume)</span>
+                </div>
+                <div style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                  Live quantitative screener tracking 5m momentum, Hurst exponents (trending vs mean-reverting), and volatility breakouts.
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:12px;">
+              <button onclick="fetchBinanceUniverse(true)" class="btn btn-secondary btn-sm" style="font-size:12px; padding:6px 14px; border-radius:6px; cursor:pointer;">🔄 Refresh Universe</button>
+            </div>
+          </div>
+        </header>
+
+        <!-- SCREENER TILES GRID (Spacious, full height) -->
+        <div style="background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+            <div style="font-size:14px; font-weight:700; color:#fff;">
+              Top Volume &amp; Momentum Alpha Opportunities
+            </div>
+            <div style="display:flex; gap:8px;">
+              <span style="font-size:11px; color:var(--text-muted); padding:4px 10px; background:rgba(255,255,255,0.04); border-radius:6px;">Auto-Updates Every 10s</span>
+            </div>
+          </div>
+          <div id="binanceUniverseTiles" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; min-height:450px; max-height:75vh; overflow-y:auto; padding-right:6px;">
+            <div style="color:var(--text-muted); font-size:13px; grid-column:1/-1; text-align:center; padding:40px;">Scanning 300+ Binance pairs for top volume &amp; momentum...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+      <!-- ==================== TAB 3: POLYMARKET 5M BINARY ==================== -->
+      <section id="tab-cockpit" class="tab-pane">
+
+        <!-- Polymarket Active Contract & Wallet Telemetry Strip -->
+        <div class="cockpit-market-bar" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px; background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px 20px;">
+          <div class="header-market-pill" id="headerMarketPill" style="display:flex; align-items:center; gap:12px;">
+            <div class="pulse-indicator" id="marketPulse"></div>
+            <div class="market-info-mini">
+              <span class="mkt-label" style="font-size:10px; color:var(--text-muted); font-weight:700;">ACTIVE 5M INTERVAL:</span>
+              <span class="mkt-slug font-mono" id="currentSlugDisplay" style="font-size:13px; color:#fff; font-weight:700;">Loading...</span>
+            </div>
+            <div class="countdown-box" style="display:flex; align-items:baseline; gap:4px; background:rgba(6,182,212,0.15); border:1px solid rgba(6,182,212,0.3); padding:4px 10px; border-radius:6px;">
+              <span class="cd-number font-mono" id="countdownSeconds" style="font-size:16px; font-weight:800; color:var(--cyan);">--</span>
+              <span class="cd-unit" style="font-size:11px; color:var(--cyan);">s left</span>
+            </div>
+          </div>
+          <div class="header-wallet-bar" style="display:flex; align-items:center; gap:10px;">
+            <div class="wallet-chip" style="display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.04); padding:6px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08);">
+              <span class="wallet-icon">👛</span>
+              <span class="wallet-addr font-mono" id="walletAddressDisplay" title="Click to view on PolygonScan" style="font-size:12px; color:var(--text-secondary);">0xC092...05ad</span>
+            </div>
+            <div class="balance-pill" style="display:flex; align-items:center; gap:6px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); padding:6px 12px; border-radius:8px;">
+              <span class="bal-label" style="font-size:10px; color:var(--emerald); font-weight:700;">USDC:</span>
+              <span class="bal-value font-mono" id="walletUsdcBalance" style="font-size:13px; font-weight:800; color:#fff;">$0.00</span>
+            </div>
+            <div class="auth-pill verified" id="authStatusPill">
+              <span class="auth-dot"></span>
+              <span style="font-size:11px; font-weight:700;">L2 AUTH</span>
+            </div>
+            <div class="status-badge ready" id="botStatusBadge">
+              <span class="dot"></span>
+              <span id="botStatusText" style="font-size:11px; font-weight:700;">BOT: IDLE</span>
+            </div>
+          </div>
+        </div>
+
+
+
+        <!-- Unified 3-Step Trade Entry Readiness Strip -->
+        <div class="readiness-strip" id="readinessStrip">
+          <div class="readiness-step" id="rsStepPhase">
+            <span class="rs-step-num">1</span>
+            <div class="rs-step-info">
+              <span class="rs-label">CANDLE PHASE</span>
+              <strong class="rs-val" id="rsValPhase">Phase 1: Formation (280s left)</strong>
+            </div>
+          </div>
+          <div class="rs-divider">➔</div>
+          <div class="readiness-step" id="rsStepImpulse">
+            <span class="rs-step-num">2</span>
+            <div class="rs-step-info">
+              <span class="rs-label">IMPULSE PROGRESS</span>
+              <strong class="rs-val" id="rsValImpulse">+$0.00 / $70.00 (0%)</strong>
+            </div>
+          </div>
+          <div class="rs-divider">➔</div>
+          <div class="readiness-step" id="rsStepSignal">
+            <span class="rs-step-num">3</span>
+            <div class="rs-step-info">
+              <span class="rs-label">DECISION ENGINE</span>
+              <strong class="rs-val" id="rsValSignal">WAITING FOR ENTRY WINDOW</strong>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Live Market Alert Banner -->
+        <div class="signal-alert-banner idle" id="signalAlertBanner" aria-live="polite">
+          <div class="alert-icon" id="signalAlertIcon">⏳</div>
+          <div class="alert-content">
+            <h4 id="signalAlertTitle">MONITORING BTC 5-MINUTE CANDLE</h4>
+            <p id="signalAlertDesc">Waiting for candle momentum to form. Target entry window triggers around 120s remaining.</p>
+          </div>
+          <div class="alert-action" id="signalAlertAction">
+            <span class="phase-pill" id="candlePhasePill">Phase 1: Formation</span>
+          </div>
+        </div>
+
+        <!-- Telemetry & Impulse Grid -->
+        <div class="cockpit-grid">
+          
+          <!-- Column 1: Live BTC Spot & Net Impulse Meter -->
+          <div class="card impulse-card">
+            <div class="card-header">
+              <div class="title-with-desc">
+                <h3>🔴 Live BTC Spot & Impulse Delta</h3>
+                <p>Binance 1-second price feed vs 5m candle open</p>
+              </div>
+              <span class="badge badge-cyan" id="liveFeedBadge">Feed: Connected</span>
+            </div>
+
+            <div class="card-body">
+              <div class="btc-price-display">
+                <div class="price-row">
+                  <span class="spot-label">LIVE BTC/USDT:</span>
+                  <span class="spot-value" id="liveBtcSpot">$--,---.--</span>
+                </div>
+                <div class="open-row">
+                  <span>Candle Open:</span>
+                  <strong id="liveBtcOpen">$--,---.--</strong>
+                </div>
+              </div>
+
+              <!-- Micro-Sparkline: Real-Time BTC Spot Spline -->
+              <div class="sparkline-box">
+                <div class="sparkline-header">
+                  <span>LIVE TICKS TRAJECTORY</span>
+                  <span class="sparkline-trend text-emerald" id="sparklineTrend">● Live Stream</span>
+                </div>
+                <div class="sparkline-canvas-container">
+                  <canvas id="btcSparkline" height="48"></canvas>
+                </div>
+              </div>
+
+              <!-- Impulse Delta Callout -->
+              <div class="impulse-delta-box" id="impulseDeltaBox">
+                <div class="delta-label">5-MINUTE NET IMPULSE:</div>
+                <div class="delta-value" id="liveBtcImpulse">+$0.00 USD</div>
+                <div class="delta-sub" id="deltaSubText">Target: ±$70.00 USD for momentum entry</div>
+              </div>
+
+              <!-- Visual Progress Gauge towards $70 Threshold -->
+              <div class="gauge-container">
+                <div class="gauge-labels">
+                  <span>$0</span>
+                  <span>Impulse Progress</span>
+                  <span>$70 Threshold</span>
+                </div>
+                <div class="gauge-track">
+                  <div class="gauge-fill" id="impulseGaugeFill" style="width: 0%;"></div>
+                </div>
+                <div class="gauge-pct" id="impulseGaugePct">0% to trigger</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: Polymarket 5M Orderbook & Skew -->
+          <div class="card orderbook-card">
+            <div class="card-header">
+              <div class="title-with-desc">
+                <h3>📊 Polymarket CLOB Orderbook</h3>
+                <p id="mktTitleShort">Loading active 5m market...</p>
+              </div>
+              <a href="#" target="_blank" class="link-polymarket" id="linkPolymarket" title="Open on Polymarket">
+                ↗ Polymarket
+              </a>
+            </div>
+
+            <div class="card-body">
+              <!-- Dual UP vs DOWN Orderbook Cards -->
+              <div class="orderbook-comparison">
+                <!-- UP Token -->
+                <div class="token-ob-box up-box">
+                  <div class="token-ob-header">
+                    <span class="token-side">🟢 UP TOKEN</span>
+                    <span class="token-prob" id="obUpProb">--%</span>
+                  </div>
+                  <div class="ob-prices">
+                    <div class="ob-row">
+                      <span>Best Bid:</span>
+                      <strong id="obUpBid">$--</strong>
+                    </div>
+                    <div class="ob-row highlight">
+                      <span>Best Ask:</span>
+                      <strong id="obUpAsk">$--</strong>
+                    </div>
+                    <div class="ob-row">
+                      <span>Spread:</span>
+                      <span id="obUpSpread">--</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- DOWN Token -->
+                <div class="token-ob-box down-box">
+                  <div class="token-ob-header">
+                    <span class="token-side">🟣 DOWN TOKEN</span>
+                    <span class="token-prob" id="obDownProb">--%</span>
+                  </div>
+                  <div class="ob-prices">
+                    <div class="ob-row">
+                      <span>Best Bid:</span>
+                      <strong id="obDownBid">$--</strong>
+                    </div>
+                    <div class="ob-row highlight">
+                      <span>Best Ask:</span>
+                      <strong id="obDownAsk">$--</strong>
+                    </div>
+                    <div class="ob-row">
+                      <span>Spread:</span>
+                      <span id="obDownSpread">--</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Market Skew Bar -->
+              <div class="skew-bar-wrapper">
+                <div class="skew-labels">
+                  <span>UP Implied: <b id="skewUpLabel">50%</b></span>
+                  <span>Market Skew</span>
+                  <span>DOWN Implied: <b id="skewDownLabel">50%</b></span>
+                </div>
+                <div class="skew-bar">
+                  <div class="skew-fill-up" id="skewFillUp" style="width: 50%;"></div>
+                  <div class="skew-fill-down" id="skewFillDown" style="width: 50%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bot Execution Deck & Session Trades Grid -->
+        <div class="execution-grid">
+          
+          <!-- Bot Control Deck -->
+          <div class="card control-deck-card">
+            <div class="card-header">
+              <h3>🎮 Bot Execution Control Deck</h3>
+              <span class="badge badge-cyan" id="consoleModePill">Mode: Dry-Run</span>
+            </div>
+
+            <div class="card-body">
+              <!-- Strategy Archetype Selector (5 Algorithmic Profiles) -->
+              <div class="form-group" style="margin-bottom: 18px;">
+                <div class="label-with-hint">
+                  <label>Strategy Archetype (5 Algorithmic Profiles)</label>
+                  <span class="label-hint" id="strategySpecHint">Ceiling $0.78 | TP +22% | SL -25% | Impulse ±$65</span>
+                </div>
+                <div class="strategy-pill-grid">
+                  <button class="strat-pill" id="btnStratJev" onclick="setStrategyProfile('jev_ai_brain')">
+                    <span class="strat-icon">&#129504;</span>
+                    <span class="strat-name">Jev AI Brain</span>
+                  </button>
+                  <button class="strat-pill active" id="btnStratMomentum" onclick="setStrategyProfile('momentum_value')">
+                    <span class="strat-icon">🎯</span>
+                    <span class="strat-name">Momentum Value</span>
+                  </button>
+                  <button class="strat-pill" id="btnStratScalp" onclick="setStrategyProfile('quick_scalp')">
+                    <span class="strat-icon">⚡</span>
+                    <span class="strat-name">Quick Scalp</span>
+                  </button>
+                  <button class="strat-pill" id="btnStratReversion" onclick="setStrategyProfile('mean_reversion')">
+                    <span class="strat-icon">🔄</span>
+                    <span class="strat-name">Mean Reversion</span>
+                  </button>
+                  <button class="strat-pill" id="btnStratHedge" onclick="setStrategyProfile('skew_hedge')">
+                    <span class="strat-icon">🛡️</span>
+                    <span class="strat-name">Skew Hedge</span>
+                  </button>
+                  <button class="strat-pill" id="btnStratSniper" onclick="setStrategyProfile('macro_trend_sniper')">
+                    <span class="strat-icon">🔭</span>
+                    <span class="strat-name">Trend Sniper</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="control-row-grid">
+                <!-- Stake Sizing -->
+                <div class="form-group">
+                  <label>Stake Sizing (USDC)</label>
+                  <div class="stake-selector">
+                    <button class="stake-btn active" onclick="setStake(5)">$5</button>
+                    <button class="stake-btn" onclick="setStake(10)">$10</button>
+                    <button class="stake-btn" onclick="setStake(20)">$20</button>
+                    <input type="number" id="customStakeInput" placeholder="Custom" min="1" max="100" oninput="setCustomStake(this.value)">
+                  </div>
+                </div>
+
+                <!-- Threshold -->
+                <div class="form-group">
+                  <label>CLOB Trigger Threshold</label>
+                  <div class="stake-selector">
+                    <button class="stake-btn" onclick="setThreshold(0.65)">0.65</button>
+                    <button class="stake-btn active" onclick="setThreshold(0.70)">0.70</button>
+                    <button class="stake-btn" onclick="setThreshold(0.75)">0.75</button>
+                  </div>
+                </div>
+
+                <!-- Run Mode (One-Shot vs Loop) -->
+                <div class="form-group">
+                  <label>Execution Schedule</label>
+                  <div class="segmented-control">
+                    <button class="segment active" id="modeOneShot" onclick="setRunMode('one_shot')">
+                      🎯 One-Shot (Next 5m)
+                    </button>
+                    <button class="segment" id="modeLoop" onclick="setRunMode('continuous_loop')">
+                      🔄 Continuous Loop
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Safety Switch: Live Real Money vs Dry Run -->
+              <div class="safety-box">
+                <div class="switch-container">
+                  <label class="switch">
+                    <input type="checkbox" id="chkExecuteLive">
+                    <span class="slider round"></span>
+                  </label>
+                  <div class="switch-desc">
+                    <span class="switch-title" id="executeLabel">DRY-RUN / PAPER TRADING (Safe Simulation)</span>
+                    <span class="switch-sub">Simulates order placement and logs real-time paper trades without risking funds.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Balance warning in live mode -->
+              <div id="stakeBalanceWarning" class="stake-balance-warning" style="display: none;">
+                ⚠️ Target stake ($5.00) exceeds wallet balance ($0.00). Real order execution disabled until deposit.
+              </div>
+
+              <!-- Action Launch Buttons -->
+              <div class="action-buttons-row">
+                <button class="btn btn-emerald btn-lg" id="btnStartBot" onclick="startBot()" aria-label="Start Bot Execution Session">
+                  ▶ START BOT SESSION
+                </button>
+                <button class="btn btn-danger btn-lg" id="btnStopBot" onclick="stopBot()" disabled aria-label="Emergency Stop Bot Execution (Shortcut: Escape)">
+                  ⏹ STOP SESSION <kbd class="kbd-hint">ESC</kbd>
+                </button>
+              </div>
+
+              <!-- Bot Status Indicator Strip -->
+              <div class="bot-state-strip" id="botStateStrip">
+                <div class="strip-item">
+                  <span>STATUS:</span> <strong id="stateRunning">STOPPED</strong>
+                </div>
+                <div class="strip-item">
+                  <span>PID:</span> <strong id="statePid">—</strong>
+                </div>
+                <div class="strip-item">
+                  <span>MODE:</span> <strong id="stateMode">Dry-Run</strong>
+                </div>
+                <div class="strip-item">
+                  <span>RUNNING SINCE:</span> <strong id="stateRuntime">—</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Comprehensive Historical Trade Ledger (Paper vs Real) -->
+          <div class="card trade-ledger-card">
+            <div class="card-header">
+              <div class="title-with-desc">
+                <div class="header-title-row">
+                  <h3>📑 Historical Trade Ledger</h3>
+                  <span class="badge badge-cyan" id="ledgerModeBadge">Mode: Paper Trading (Simulation)</span>
+                </div>
+                <p id="ledgerSubTitle">Tracking all historical executions, entry/exit pricing, stop-loss triggers, and realized PnL</p>
+              </div>
+              <div class="ledger-header-actions">
+                <div class="segmented-control mode-switch-pills">
+                  <button class="segment active" id="btnLedgerPaper" onclick="switchLedgerMode('paper')">
+                    📄 Paper Trades
+                  </button>
+                  <button class="segment" id="btnLedgerLive" onclick="switchLedgerMode('live')">
+                    🔴 Real Live Trades
+                  </button>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="reloadTradeLedger()">🔄 Refresh</button>
+                <button class="btn btn-secondary btn-sm" onclick="exportTradeHistoryCSV()" title="Export CSV">📥 CSV</button>
+              </div>
+            </div>
+
+            <!-- Aggregate Summary Metrics Ribbon -->
+            <div class="ledger-metrics-ribbon" id="ledgerMetricsRibbon">
+              <div class="ledger-metric-chip">
+                <span class="lm-label">TOTAL TRADES</span>
+                <strong class="lm-val" id="lmTotalTrades">0</strong>
+              </div>
+              <div class="ledger-metric-chip">
+                <span class="lm-label">WIN RATE</span>
+                <strong class="lm-val text-cyan" id="lmWinRate">0.0%</strong>
+                <span class="lm-sub" id="lmWinsLosses">0W / 0L</span>
+              </div>
+              <div class="ledger-metric-chip">
+                <span class="lm-label">NET REALIZED PNL</span>
+                <strong class="lm-val text-emerald" id="lmNetPnl">$0.00 USDC</strong>
+              </div>
+              <div class="ledger-metric-chip">
+                <span class="lm-label">AVG TRADE PNL</span>
+                <strong class="lm-val" id="lmAvgPnl">$0.00</strong>
+              </div>
+              <div class="ledger-metric-chip">
+                <span class="lm-label">PROFIT FACTOR</span>
+                <strong class="lm-val" id="lmProfitFactor">0.00</strong>
+              </div>
+            </div>
+
+            <div class="table-responsive" style="max-height: 380px;">
+              <table class="data-table" id="tradeLedgerTable">
+                <thead>
+                  <tr>
+                    <th>Time (UTC)</th>
+                    <th>Market</th>
+                    <th>Side</th>
+                    <th>Entry Price</th>
+                    <th>Size / Cost</th>
+                    <th>Exit Price</th>
+                    <th>Exit Reason</th>
+                    <th>Realized PnL</th>
+                    <th>Status</th>
+                    <th>Order / Tx</th>
+                  </tr>
+                </thead>
+                <tbody id="tradeLedgerBody">
+                  <tr>
+                    <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 35px;">
+                      Loading historical trades...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ==================== TAB 4: SETTINGS & RISK ==================== -->
+      <section id="tab-settings" class="tab-pane">
+        <div style="max-width:1600px; margin:0 auto; display:flex; flex-direction:column; gap:16px;">
+          <!-- Settings Sub-Navigation -->
+          <div class="settings-sub-nav" style="display:flex; gap:10px; padding:6px; background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-radius:10px;">
+            <button class="settings-sub-tab active" data-subtab="config" onclick="switchSettingsSubTab('config')" id="subtabBtn-config" style="padding:8px 18px; border-radius:8px; border:none; background:#4f46e5; color:#fff; font-weight:700; cursor:pointer;">
+              ⚙️ Strategy &amp; Risk Configuration
+            </button>
+            <button class="settings-sub-tab" data-subtab="backtest" onclick="switchSettingsSubTab('backtest')" id="subtabBtn-backtest" style="padding:8px 18px; border-radius:8px; border:none; background:transparent; color:var(--text-secondary); font-weight:600; cursor:pointer;">
+              📊 24H Backtest Lab
+            </button>
+            <button class="settings-sub-tab" data-subtab="logs" onclick="switchSettingsSubTab('logs')" id="subtabBtn-logs" style="padding:8px 18px; border-radius:8px; border:none; background:transparent; color:var(--text-secondary); font-weight:600; cursor:pointer;">
+              📋 System Logs
+            </button>
+          </div>
+
+          <div id="subtab-config" class="subtab-pane">
+
+        <div class="card config-card">
+          <div class="card-header">
+            <div class="title-with-desc">
+              <h3>⚙️ Interactive Strategy Settings (`config/btc_5m_profiles.yaml`)</h3>
+              <p>Tune momentum parameters, thresholds, and risk limits with instant live reload</p>
+            </div>
+            <div class="config-actions">
+              <button class="btn btn-emerald btn-sm" onclick="saveActiveSettings()">💾 Save & Apply</button>
+              <button class="btn btn-secondary btn-sm" onclick="loadActiveSettings()">🔄 Reset</button>
+            </div>
+          </div>
+          <div class="card-body config-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px;">
+            <!-- 1. Momentum Value -->
+            <div class="config-col">
+              <div class="config-col-header">
+                <h4>🎯 Momentum Value Profile (Default)</h4>
+                <span class="badge badge-cyan">Balanced R:R</span>
+              </div>
+              <div class="config-form">
+                <div class="form-row">
+                  <label for="cfg_mv_threshold">CLOB Ask Threshold:</label>
+                  <input type="number" id="cfg_mv_threshold" step="0.01" min="0.50" max="0.95" value="0.68">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mv_max_entry">Max Entry Price Ceiling:</label>
+                  <input type="number" id="cfg_mv_max_entry" step="0.01" min="0.50" max="0.95" value="0.78">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mv_stake">Default Stake (USDC):</label>
+                  <input type="number" id="cfg_mv_stake" step="0.5" min="1" max="100" value="5.0">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mv_tp">Take-Profit (%):</label>
+                  <input type="number" id="cfg_mv_tp" step="1" min="5" max="100" value="22">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mv_sl">Stop-Loss (%):</label>
+                  <input type="number" id="cfg_mv_sl" step="1" min="5" max="50" value="25">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mv_impulse">Min BTC Impulse ($):</label>
+                  <input type="number" id="cfg_mv_impulse" step="5" min="10" max="200" value="65">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mv_cap">Max Daily Trades Cap:</label>
+                  <input type="number" id="cfg_mv_cap" step="1" min="1" max="50" value="16">
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. Quick Scalp -->
+            <div class="config-col">
+              <div class="config-col-header">
+                <h4>⚡ Quick Scalp Profile</h4>
+                <span class="badge badge-purple">Trailing Break-Even</span>
+              </div>
+              <div class="config-form">
+                <div class="form-row">
+                  <label for="cfg_qs_threshold">CLOB Ask Threshold:</label>
+                  <input type="number" id="cfg_qs_threshold" step="0.01" min="0.50" max="0.95" value="0.70">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_max_entry">Max Entry Price Ceiling:</label>
+                  <input type="number" id="cfg_qs_max_entry" step="0.01" min="0.50" max="0.95" value="0.80">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_stake">Default Stake (USDC):</label>
+                  <input type="number" id="cfg_qs_stake" step="0.5" min="1" max="100" value="5.0">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_tp">Take-Profit (%):</label>
+                  <input type="number" id="cfg_qs_tp" step="1" min="5" max="100" value="12">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_trailing">Trailing to Break-Even (%):</label>
+                  <input type="number" id="cfg_qs_trailing" step="1" min="2" max="25" value="8">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_sl">Stop-Loss (%):</label>
+                  <input type="number" id="cfg_qs_sl" step="1" min="5" max="50" value="18">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_impulse">Min BTC Impulse ($):</label>
+                  <input type="number" id="cfg_qs_impulse" step="5" min="10" max="200" value="55">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_qs_cap">Max Daily Trades Cap:</label>
+                  <input type="number" id="cfg_qs_cap" step="1" min="1" max="100" value="24">
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. Mean Reversion -->
+            <div class="config-col">
+              <div class="config-col-header">
+                <h4>🔄 Mean Reversion Underdog</h4>
+                <span class="badge badge-warning">High Asymmetric Payoff</span>
+              </div>
+              <div class="config-form">
+                <div class="form-row">
+                  <label for="cfg_mr_fav_trigger">Favorite Trigger Ask (>=):</label>
+                  <input type="number" id="cfg_mr_fav_trigger" step="0.01" min="0.75" max="0.95" value="0.85">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mr_max_entry">Max Underdog Entry Ask:</label>
+                  <input type="number" id="cfg_mr_max_entry" step="0.01" min="0.05" max="0.40" value="0.25">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mr_stake">Default Stake (USDC):</label>
+                  <input type="number" id="cfg_mr_stake" step="0.5" min="1" max="100" value="5.0">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mr_tp">Take-Profit (%):</label>
+                  <input type="number" id="cfg_mr_tp" step="10" min="50" max="300" value="150">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mr_sl">Stop-Loss (%):</label>
+                  <input type="number" id="cfg_mr_sl" step="5" min="10" max="80" value="50">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_mr_cap">Max Daily Trades Cap:</label>
+                  <input type="number" id="cfg_mr_cap" step="1" min="1" max="50" value="12">
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Skew Tail Hedge -->
+            <div class="config-col">
+              <div class="config-col-header">
+                <h4>🛡️ Skew Tail Hedge</h4>
+                <span class="badge badge-emerald">Hedging Guard</span>
+              </div>
+              <div class="config-form">
+                <div class="form-row">
+                  <label for="cfg_sh_threshold">Core Ask Threshold:</label>
+                  <input type="number" id="cfg_sh_threshold" step="0.01" min="0.50" max="0.95" value="0.70">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_sh_max_entry">Max Entry Price Ceiling:</label>
+                  <input type="number" id="cfg_sh_max_entry" step="0.01" min="0.50" max="0.95" value="0.82">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_sh_stake">Default Stake (USDC):</label>
+                  <input type="number" id="cfg_sh_stake" step="0.5" min="1" max="100" value="5.0">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_sh_sl">Stop-Loss (%):</label>
+                  <input type="number" id="cfg_sh_sl" step="1" min="5" max="50" value="25">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_sh_cap">Max Daily Trades Cap:</label>
+                  <input type="number" id="cfg_sh_cap" step="1" min="1" max="50" value="12">
+                </div>
+              </div>
+            </div>
+
+            <!-- 5. Macro Trend Sniper -->
+            <div class="config-col">
+              <div class="config-col-header">
+                <h4>🔭 Macro Trend Sniper</h4>
+                <span class="badge badge-blue">High Conviction</span>
+              </div>
+              <div class="config-form">
+                <div class="form-row">
+                  <label for="cfg_ts_threshold">CLOB Ask Threshold:</label>
+                  <input type="number" id="cfg_ts_threshold" step="0.01" min="0.50" max="0.95" value="0.72">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_ts_max_entry">Max Entry Price Ceiling:</label>
+                  <input type="number" id="cfg_ts_max_entry" step="0.01" min="0.50" max="0.95" value="0.82">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_ts_stake">Default Stake (USDC):</label>
+                  <input type="number" id="cfg_ts_stake" step="0.5" min="1" max="100" value="5.0">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_ts_tp">Take-Profit (%):</label>
+                  <input type="number" id="cfg_ts_tp" step="1" min="5" max="100" value="28">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_ts_sl">Stop-Loss (%):</label>
+                  <input type="number" id="cfg_ts_sl" step="1" min="5" max="50" value="20">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_ts_impulse">Min BTC Impulse ($):</label>
+                  <input type="number" id="cfg_ts_impulse" step="5" min="50" max="250" value="85">
+                </div>
+                <div class="form-row">
+                  <label for="cfg_ts_cap">Max Daily Trades Cap:</label>
+                  <input type="number" id="cfg_ts_cap" step="1" min="1" max="50" value="10">
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="config-footer-alert" id="settingsStatusMsg" style="display: none;"></div>
+        </div>
+          </div>
+
+          <div id="subtab-backtest" class="subtab-pane" style="display:none;">
+
+        <!-- Hero Metrics Banner -->
+        <div class="metrics-grid">
+          <div class="metric-card glow-cyan">
+            <div class="metric-header">
+              <span>WIN RATE (24H REPLAY)</span>
+              <span class="badge badge-success">Conservative</span>
+            </div>
+            <div class="metric-value" id="valWinRate">94.2%</div>
+            <div class="metric-sub" id="valWinsLosses">49 Wins / 3 Stop-Losses (Uncapped)</div>
+          </div>
+
+          <div class="metric-card glow-emerald">
+            <div class="metric-header">
+              <span>REALIZED NET PNL</span>
+              <span class="badge badge-cyan" id="badgeCapMode">Strict Cap: +$10.55</span>
+            </div>
+            <div class="metric-value text-emerald" id="valNetPnl">+$39.31</div>
+            <div class="metric-sub" id="valUncappedPnl">Full 24h (52 signals): +$39.31 USDC</div>
+          </div>
+
+          <div class="metric-card glow-purple">
+            <div class="metric-header">
+              <span>QUALIFIED SIGNALS</span>
+              <span class="badge badge-purple">100% Day Covered</span>
+            </div>
+            <div class="metric-value" id="valSignalsRatio">52 / 288</div>
+            <div class="metric-sub">Filters out 81.9% of choppy intervals</div>
+          </div>
+
+          <div class="metric-card glow-blue">
+            <div class="metric-header">
+              <span>MAX DRAWDOWN</span>
+              <span class="badge badge-blue">Stop-Loss Guard</span>
+            </div>
+            <div class="metric-value" id="valMaxDd">$1.42</div>
+            <div class="metric-sub">-25% SL capped downside on reversals</div>
+          </div>
+        </div>
+
+        <!-- Strategy Lab Leaderboard Card -->
+        <div class="card strategy-lab-card">
+          <div class="card-header">
+            <div class="title-with-desc">
+              <h3>🏆 Strategy Lab: 5-Archetype Comparative Leaderboard</h3>
+              <p>Simulated side-by-side across all 288 historical Sunday intervals (2026-08-30 UTC)</p>
+            </div>
+            <div class="lab-actions">
+              <button class="btn btn-cyan btn-sm" id="btnRunMultiBacktest" onclick="runMultiBacktest()">
+                ⚡ Re-Run All 5 Strategies
+              </button>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="data-table leaderboard-table" id="leaderboardTable">
+              <thead>
+                <tr>
+                  <th>Rank & Strategy Archetype</th>
+                  <th>Trades</th>
+                  <th>Win Rate</th>
+                  <th>Payoff Ratio</th>
+                  <th>Profit Factor</th>
+                  <th>Net PnL (USDC)</th>
+                  <th>Max DD</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboardBody">
+                <tr>
+                  <td colspan="8" style="text-align: center; padding: 24px; color: var(--text-muted);">
+                    Loading Strategy Lab leaderboard...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Equity Curve Chart -->
+        <div class="card chart-card">
+          <div class="card-header">
+            <div class="title-with-desc">
+              <h3>Sunday 24-Hour Cumulative PnL & Equity Curve</h3>
+              <p>Chronological performance across all 288 five-minute intervals on August 30, 2026</p>
+            </div>
+            <div class="chart-controls">
+              <button class="pill-btn active" id="btnChartAll" onclick="setChartFilter('all')">All Signals (52)</button>
+              <button class="pill-btn" id="btnChartCapped" onclick="setChartFilter('capped')">Strict Cap (12 Trades)</button>
+              <button class="btn btn-secondary btn-sm" onclick="reloadBacktest()">🔄 Refresh</button>
+            </div>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="equityChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Interval Inspection Table -->
+        <div class="card table-card">
+          <div class="card-header">
+            <div class="title-with-desc">
+              <h3>24-Hour Interval Breakdown (288 Intervals)</h3>
+              <p>Inspect BTC impulse, CLOB pricing, execution decisions, and settlements</p>
+            </div>
+            <div class="table-filters">
+              <input type="text" id="tableSearch" placeholder="Search time (e.g. 14:15)..." oninput="filterTableDebounced()">
+              <select id="filterTradeStatus" onchange="filterTable()">
+                <option value="traded">Traded Only (Signals)</option>
+                <option value="all">All 288 Intervals</option>
+                <option value="wins">Wins Only</option>
+                <option value="losses">Losses / SL Only</option>
+                <option value="skipped">Skipped (No Signal)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="backtestTable">
+              <thead>
+                <tr>
+                  <th>Time (UTC)</th>
+                  <th>Market Slug</th>
+                  <th>BTC Open</th>
+                  <th>BTC at 2m</th>
+                  <th>Impulse</th>
+                  <th>Signal</th>
+                  <th>Entry Ask</th>
+                  <th>Exit Bid</th>
+                  <th>Exit Type</th>
+                  <th>Result</th>
+                  <th>Net PnL</th>
+                  <th>Cum. PnL</th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+          </div>
+
+          <div id="subtab-logs" class="subtab-pane" style="display:none;">
+
+        <div class="card log-card">
+          <div class="card-header">
+            <div class="title-with-desc">
+              <h3>Live Bot Execution Logs</h3>
+              <p id="logFileHeader">Displaying latest terminal output from runtime logs</p>
+            </div>
+            <div class="log-controls">
+              <div class="log-filters">
+                <button class="log-filter-btn active" data-filter="all" onclick="setLogFilter('all')">All</button>
+                <button class="log-filter-btn" data-filter="signal" onclick="setLogFilter('signal')">Signals & Impulses</button>
+                <button class="log-filter-btn" data-filter="order" onclick="setLogFilter('order')">Orders & PnL</button>
+                <button class="log-filter-btn" data-filter="error" onclick="setLogFilter('error')">Errors</button>
+              </div>
+              <label class="auto-scroll-toggle">
+                <input type="checkbox" id="chkAutoScroll" checked> Auto-scroll
+              </label>
+              <button class="btn btn-secondary btn-sm" onclick="fetchLogs()">🔄 Refresh</button>
+            </div>
+          </div>
+          <div class="terminal-view" id="terminalOutput">
+            Loading terminal logs...
+          </div>
+        </div>
+          </div>
+        </div>
+      </section>
+
+</main>
+  </div>
+
+  <!-- Live Real Trading Safety Confirmation Modal -->
+  <div class="modal-backdrop" id="liveSafetyModal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-icon-warning">⚠️</div>
+        <div>
+          <h3 class="modal-title">Enable Live Real Money Trading?</h3>
+          <p class="modal-sub">Confirm Polygon on-chain order placement</p>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="warning-alert-box">
+          <strong>WARNING:</strong> You are about to enable <b>LIVE REAL ORDER EXECUTION</b>. The bot will automatically submit binding orders on the Polymarket CLOB with real USDC.
+        </div>
+        <div class="wallet-review-box">
+          <div class="wr-row">
+            <span>Polygon Wallet:</span>
+            <strong id="modalWalletAddr">0xC092...05ad</strong>
+          </div>
+          <div class="wr-row">
+            <span>USDC Balance:</span>
+            <strong class="text-emerald" id="modalWalletUsdc">$0.00 USDC</strong>
+          </div>
+          <div class="wr-row">
+            <span>Target Stake:</span>
+            <strong id="modalStakeAmt">$5.00 USDC</strong>
+          </div>
+          <div class="wr-row highlight-risk">
+            <span>Total Session Exposure (<span id="modalTradesCount">12</span> trades max):</span>
+            <strong class="text-rose" id="modalTotalExposure">$60.00 USDC</strong>
+          </div>
+        </div>
+
+        <!-- Typed Confirmation Friction -->
+        <div class="typed-confirm-box">
+          <label for="liveConfirmInput">Security Check: Type <strong class="text-rose">LIVE</strong> below to enable real orders:</label>
+          <input type="text" id="liveConfirmInput" placeholder="Type LIVE here" autocomplete="off" oninput="handleLiveConfirmInput(this.value)">
+        </div>
+
+        <p class="modal-note">If your wallet has $0.00 USDC, on-chain market orders will be rejected. You can test without funds at any time using Paper Trading (Dry-Run) mode.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="dismissLiveSafetyModal(false)">
+          Cancel (Stay in Paper Mode)
+        </button>
+        <button class="btn btn-danger btn-disabled" id="btnConfirmLive" onclick="dismissLiveSafetyModal(true)" disabled>
+          I Understand, Enable Live Orders
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=pro_11"></script>
+</body>
+</html>

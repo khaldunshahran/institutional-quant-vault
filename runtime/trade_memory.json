@@ -1,0 +1,1062 @@
+[
+  {
+    "trade_id": "quant_BTCUSDT_1789948605",
+    "timestamp": 1789948814.7733335,
+    "timestamp_utc": "2026-09-21 00:00:14 UTC",
+    "side": "LONG",
+    "entry_price": 100.0,
+    "exit_price": 81184.3,
+    "realized_pnl": 4054215.0,
+    "exit_reason": "TP2_RUNNER_TARGET",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.5,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "UNKNOWN",
+      "robust_z": 0.0
+    },
+    "lesson": "Target hit (+$4054215.00): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_1000PEPEUSDT_2026-09-19 23:27:41 UTC",
+    "timestamp": 1789860636.1799214,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.0041364,
+    "exit_price": 0.0041282,
+    "realized_pnl": -39.65,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-39.65): Trade stalled for 21m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_BNBUSDT_2026-09-19 23:27:12 UTC",
+    "timestamp": 1789860636.178637,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 762.69,
+    "exit_price": 762.61,
+    "realized_pnl": -2.1,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-2.10): Trade stalled for 20m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_HYPEUSDT_2026-09-19 23:26:52 UTC",
+    "timestamp": 1789860636.1773274,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 91.65,
+    "exit_price": 91.715,
+    "realized_pnl": 14.18,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$14.18): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_GUSDT_2026-09-19 23:25:45 UTC",
+    "timestamp": 1789860636.1759262,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.01014,
+    "exit_price": 0.010308,
+    "realized_pnl": 165.68,
+    "exit_reason": "TP2_RUNNER_TARGET",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.65,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$165.68): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_INJUSDT_2026-09-19 23:24:44 UTC",
+    "timestamp": 1789860636.1747267,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 8.292,
+    "exit_price": 8.126,
+    "realized_pnl": 200.2,
+    "exit_reason": "TP2_RUNNER_TARGET",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.65,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$200.20): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_ENAUSDT_2026-09-19 23:23:02 UTC",
+    "timestamp": 1789860636.1734753,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.20644,
+    "exit_price": 0.20453,
+    "realized_pnl": -185.04,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$185.04): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_FILUSDT_2026-09-19 23:22:51 UTC",
+    "timestamp": 1789860636.1715584,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.9627,
+    "exit_price": 0.9647,
+    "realized_pnl": 41.55,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$41.55): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_SUIUSDT_2026-09-19 23:22:43 UTC",
+    "timestamp": 1789860636.1693366,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.8626,
+    "exit_price": 0.8619,
+    "realized_pnl": -8.12,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Manual exit (-8.12): Exited before SL/TP."
+  },
+  {
+    "trade_id": "quant_BANKUSDT_2026-09-19 23:22:03 UTC",
+    "timestamp": 1789860636.167849,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.03883,
+    "exit_price": 0.03888,
+    "realized_pnl": 25.75,
+    "exit_reason": "MANUAL_CLOSE",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$25.75): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_BRUSDT_2026-09-19 23:20:33 UTC",
+    "timestamp": 1789860636.1664722,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 1.08201,
+    "exit_price": 1.09331,
+    "realized_pnl": -208.87,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$208.87): SHORT lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_GUSDT_2026-09-19 23:20:05 UTC",
+    "timestamp": 1789860636.1653545,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.010155,
+    "exit_price": 0.009885,
+    "realized_pnl": -531.76,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$531.76): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_GUSDT_2026-09-19 23:19:19 UTC",
+    "timestamp": 1789860636.1642568,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.010159,
+    "exit_price": 0.010129,
+    "realized_pnl": -29.53,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Manual exit (-29.53): Exited before SL/TP."
+  },
+  {
+    "trade_id": "quant_XAUUSDT_2026-09-19 23:18:45 UTC",
+    "timestamp": 1789860636.1631477,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 4381.96,
+    "exit_price": 4381.25,
+    "realized_pnl": 3.24,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$3.24): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_PAXGUSDT_2026-09-19 23:18:39 UTC",
+    "timestamp": 1789860636.1620364,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 4367.46,
+    "exit_price": 4366.71,
+    "realized_pnl": 3.44,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$3.44): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_PAXGUSDT_2026-09-19 23:18:32 UTC",
+    "timestamp": 1789860636.1609848,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 4367.46,
+    "exit_price": 4366.71,
+    "realized_pnl": 3.44,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$3.44): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_NEARUSDT_2026-09-19 23:18:10 UTC",
+    "timestamp": 1789860636.1599987,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 3.577,
+    "exit_price": 3.596,
+    "realized_pnl": 53.12,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$53.12): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_GUSDT_2026-09-19 23:17:12 UTC",
+    "timestamp": 1789860636.1590335,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.009996,
+    "exit_price": 0.010215,
+    "realized_pnl": 219.09,
+    "exit_reason": "TP2_RUNNER_TARGET",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.65,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$219.09): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_ENAUSDT_2026-09-19 23:13:26 UTC",
+    "timestamp": 1789860636.15784,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.20177,
+    "exit_price": 0.20582,
+    "realized_pnl": 200.72,
+    "exit_reason": "TP2_RUNNER_TARGET",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.65,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$200.72): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_ONEUSDT_2026-09-19 23:13:11 UTC",
+    "timestamp": 1789860636.1568189,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 0.004504,
+    "exit_price": 0.004505,
+    "realized_pnl": -2.22,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Manual exit (-2.22): Exited before SL/TP."
+  },
+  {
+    "trade_id": "quant_GUSDT_2026-09-19 23:12:36 UTC",
+    "timestamp": 1789860636.1558228,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.010171,
+    "exit_price": 0.009916,
+    "realized_pnl": -501.43,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$501.43): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_GUSDT_2026-09-19 23:12:30 UTC",
+    "timestamp": 1789860636.1547387,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.010171,
+    "exit_price": 0.009994,
+    "realized_pnl": -348.05,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$348.05): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_ONEUSDT_2026-09-19 23:12:17 UTC",
+    "timestamp": 1789860636.1535718,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 0.0044979,
+    "exit_price": 0.0045004,
+    "realized_pnl": -5.56,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Manual exit (-5.56): Exited before SL/TP."
+  },
+  {
+    "trade_id": "quant_XTZUSDT_2026-09-19 23:11:44 UTC",
+    "timestamp": 1789860636.1523323,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 0.3608,
+    "exit_price": 0.3602,
+    "realized_pnl": 33.26,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$33.26): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_ONEUSDT_2026-09-19 23:11:20 UTC",
+    "timestamp": 1789860636.1511319,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 0.0044393,
+    "exit_price": 0.0045019,
+    "realized_pnl": -282.03,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$282.03): SHORT lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_INJUSDT_2026-09-19 23:10:22 UTC",
+    "timestamp": 1789860636.1501493,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 8.228,
+    "exit_price": 8.273,
+    "realized_pnl": 54.69,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$54.69): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_B2USDT_2026-09-19 23:10:16 UTC",
+    "timestamp": 1789860636.1493323,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.5338,
+    "exit_price": 0.5286,
+    "realized_pnl": -194.83,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$194.83): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_AVAXUSDT_2026-09-19 23:10:00 UTC",
+    "timestamp": 1789860636.1485257,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 9.79,
+    "exit_price": 9.786,
+    "realized_pnl": -8.17,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-8.17): Trade stalled for 20m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_LINKUSDT_2026-09-19 23:09:15 UTC",
+    "timestamp": 1789860636.1477404,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 12.408,
+    "exit_price": 12.423,
+    "realized_pnl": 24.18,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$24.18): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_MYXUSDT_2026-09-19 23:06:53 UTC",
+    "timestamp": 1789860636.1468368,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.08867,
+    "exit_price": 0.08786,
+    "realized_pnl": -182.7,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$182.70): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_BNBUSDT_2026-09-19 23:06:32 UTC",
+    "timestamp": 1789860636.1460974,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 761.55,
+    "exit_price": 762.75,
+    "realized_pnl": -31.51,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-31.51): Trade stalled for 20m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_AKEUSDT_2026-09-19 23:05:22 UTC",
+    "timestamp": 1789860636.1453583,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.064339,
+    "exit_price": 0.064179,
+    "realized_pnl": -49.74,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-49.74): Trade stalled for 20m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_BTCUSDT_2026-09-19 23:04:50 UTC",
+    "timestamp": 1789860636.144666,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 81220.0,
+    "exit_price": 81223.6,
+    "realized_pnl": 0.89,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$0.89): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_BTCUSDT_2026-09-19 23:04:43 UTC",
+    "timestamp": 1789860636.1437843,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 81220.0,
+    "exit_price": 81223.6,
+    "realized_pnl": 0.89,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$0.89): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_INJUSDT_2026-09-19 23:04:10 UTC",
+    "timestamp": 1789860636.1431367,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 8.061,
+    "exit_price": 8.228,
+    "realized_pnl": 207.17,
+    "exit_reason": "TP2_RUNNER_TARGET",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.65,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$207.17): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_TAOUSDT_2026-09-19 23:03:37 UTC",
+    "timestamp": 1789860636.1424763,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 264.68,
+    "exit_price": 265.24,
+    "realized_pnl": 42.31,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$42.31): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_XAUUSDT_2026-09-19 22:58:05 UTC",
+    "timestamp": 1789860636.1418624,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 4381.55,
+    "exit_price": 4381.95,
+    "realized_pnl": -1.82,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-1.82): Trade stalled for 20m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_BRUSDT_2026-09-19 22:58:03 UTC",
+    "timestamp": 1789860636.1412346,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 1.12065,
+    "exit_price": 1.10913,
+    "realized_pnl": -205.6,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$205.60): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_ETHUSDT_2026-09-19 22:53:40 UTC",
+    "timestamp": 1789860636.1406307,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 2636.27,
+    "exit_price": 2629.96,
+    "realized_pnl": -0.38,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-0.38): Trade stalled for 260m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_ETHUSDT_2026-09-19 22:53:20 UTC",
+    "timestamp": 1789860636.1401193,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 2636.27,
+    "exit_price": 2629.7,
+    "realized_pnl": -0.39,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Alpha Decay (-0.39): Trade stalled for 260m without momentum. Breakeven exit defended capital."
+  },
+  {
+    "trade_id": "quant_BRUSDT_2026-09-19 22:51:45 UTC",
+    "timestamp": 1789860636.1396306,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 1.13087,
+    "exit_price": 1.12008,
+    "realized_pnl": -190.83,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$190.83): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_BRUSDT_2026-09-19 22:48:17 UTC",
+    "timestamp": 1789860636.1389847,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 1.12778,
+    "exit_price": 1.128,
+    "realized_pnl": 1.95,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$1.95): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_B2USDT_2026-09-19 22:47:49 UTC",
+    "timestamp": 1789860636.1383371,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.5273,
+    "exit_price": 0.5251,
+    "realized_pnl": -41.72,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Manual exit (-41.72): Exited before SL/TP."
+  },
+  {
+    "trade_id": "quant_XTZUSDT_2026-09-19 22:47:15 UTC",
+    "timestamp": 1789860636.13763,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.3637,
+    "exit_price": 0.3597,
+    "realized_pnl": -219.96,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$219.96): LONG lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_FUSDT_2026-09-19 22:46:52 UTC",
+    "timestamp": 1789860636.1370587,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "LONG",
+    "entry_price": 0.004109,
+    "exit_price": 0.004098,
+    "realized_pnl": -26.77,
+    "exit_reason": "BREAK_EVEN_STOP",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Manual exit (-26.77): Exited before SL/TP."
+  },
+  {
+    "trade_id": "quant_FILUSDT_2026-09-19 22:45:21 UTC",
+    "timestamp": 1789860636.1365097,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 0.9533,
+    "exit_price": 0.9625,
+    "realized_pnl": -193.02,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$193.02): SHORT lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_BANKUSDT_2026-09-19 22:45:17 UTC",
+    "timestamp": 1789860636.1359324,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 0.03714,
+    "exit_price": 0.03758,
+    "realized_pnl": -236.94,
+    "exit_reason": "STOP_LOSS",
+    "is_win": false,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Loss (-$236.94): SHORT lacked strong CVD taker conviction (+0.0 BTC). Require strong flow."
+  },
+  {
+    "trade_id": "quant_BTCUSDT_2026-09-19 22:43:11 UTC",
+    "timestamp": 1789860636.1352692,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 81383.1,
+    "exit_price": 81192.7,
+    "realized_pnl": 0.76,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$0.76): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_BTCUSDT_2026-09-19 22:43:06 UTC",
+    "timestamp": 1789860636.1347394,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 81383.1,
+    "exit_price": 81192.8,
+    "realized_pnl": 0.76,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$0.76): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_SOLUSDT_2026-09-19 22:43:06 UTC",
+    "timestamp": 1789860636.134266,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 110.83,
+    "exit_price": 110.56,
+    "realized_pnl": 0.38,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$0.38): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_BTCUSDT_2026-09-19 22:38:21 UTC",
+    "timestamp": 1789860636.1338084,
+    "timestamp_utc": "2026-09-19 23:30:36 UTC",
+    "side": "SHORT",
+    "entry_price": 81383.1,
+    "exit_price": 81181.6,
+    "realized_pnl": 0.81,
+    "exit_reason": "ALPHA_DECAY_TIMEOUT",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.48,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "GLOBAL_AUTONOMOUS_SESSION",
+      "robust_z": 1.25
+    },
+    "lesson": "Target hit (+$0.81): SHORT executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "quant_BANKUSDT_1789859904",
+    "timestamp": 1789860123.1417375,
+    "timestamp_utc": "2026-09-19 23:22:03 UTC",
+    "side": "LONG",
+    "entry_price": 0.03883,
+    "exit_price": 0.03888,
+    "realized_pnl": 25.75,
+    "exit_reason": "MANUAL_CLOSE",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.5,
+      "obi": 0.0,
+      "cvd_15m": 0.0,
+      "session": "UNKNOWN",
+      "robust_z": 0.0
+    },
+    "lesson": "Target hit (+$25.75): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
+  },
+  {
+    "trade_id": "pos_test_123",
+    "timestamp": 1789816012.2810526,
+    "timestamp_utc": "2026-09-19 11:06:52 UTC",
+    "side": "LONG",
+    "entry_price": 81250.0,
+    "exit_price": 81650.0,
+    "realized_pnl": 28.5,
+    "exit_reason": "TAKE_PROFIT_1",
+    "is_win": true,
+    "strategy_mode": "TREND_EXPANSION",
+    "entry_metrics": {
+      "hurst": 0.68,
+      "obi": 0.42,
+      "cvd_15m": 35.0,
+      "session": "NEW_YORK_CASH_OPEN",
+      "robust_z": 0.0
+    },
+    "lesson": "Target hit (+$28.50): LONG executed at OBI +0.42 with CVD +35.0 BTC. Setup high conviction."
+  }
+]
