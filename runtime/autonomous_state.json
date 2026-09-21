@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "date": "2026-09-21",
   "daily_pnl_usd": 0.0,
   "daily_trades_count": 0,
@@ -7,5 +7,5 @@
   "daily_goal_reached": false,
   "account_balance_usd": 100000.0,
   "max_daily_allocation_usd": 15000.0,
-  "last_update": 1789953169.5129187
+  "last_update": 1789967921.7549918
 }

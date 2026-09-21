@@ -758,6 +758,11 @@ class AutonomousMultiAssetTrader:
             self._reconcile_daily_pnl()
             self.circuit_breaker_triggered = False
             self.daily_goal_reached = False
+            try:
+                from scripts.backup_runtime import backup_runtime
+                backup_runtime(runtime_dir=str(self.runtime_dir))
+            except Exception as _b_err:
+                print(f"[QUANT VAULT] Daily backup warning: {_b_err}")
 
     def get_status(self) -> Dict[str, Any]:
         self._maybe_rollover_day()

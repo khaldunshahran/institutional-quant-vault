@@ -48,6 +48,8 @@ runtime/directional_trades.json
 runtime/telegram_outbox.json
 runtime/sentry_hourly_log.json
 runtime/pending_entries.json
+# Backups
+backups/
 *.bundle
 scratch/
 scratch_*.py
