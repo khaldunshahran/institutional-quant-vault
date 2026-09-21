@@ -162,8 +162,13 @@ class TelegramAlertBot:
         try:
             items = []
             if self.outbox_path.exists():
-                with open(self.outbox_path, "r", encoding="utf-8") as f:
-                    items = json.load(f)
+                try:
+                    with open(self.outbox_path, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, list):
+                            items = loaded
+                except Exception:
+                    items = []
             items.insert(0, record)
             if len(items) > 60:
                 items = items[:60]
@@ -288,7 +293,8 @@ class TelegramAlertBot:
         dur_str = f"{duration_sec // 60}m {duration_sec % 60}s" if duration_sec > 0 else "< 1m"
         bar = make_progress_bar(daily_pnl, daily_target)
         pnl_sign = "+" if daily_pnl >= 0 else "-"
-        wr = (wins / daily_trades * 100.0) if daily_trades > 0 else 0.0
+        total_lifetime = wins + losses
+        wr = (wins / total_lifetime * 100.0) if total_lifetime > 0 else 0.0
 
         en_fmt = f"${entry_price:,.4f}" if entry_price < 1.0 else f"${entry_price:,.2f}"
         ex_fmt = f"${exit_price:,.4f}" if exit_price < 1.0 else f"${exit_price:,.2f}"
@@ -325,7 +331,8 @@ class TelegramAlertBot:
         wins = int(state.get("wins", 0))
         losses = int(state.get("losses", 0))
         trades_count = int(state.get("daily_trades_count", wins + losses))
-        wr = (wins / trades_count * 100.0) if trades_count > 0 else 0.0
+        total_lifetime = wins + losses
+        wr = (wins / total_lifetime * 100.0) if total_lifetime > 0 else 0.0
         positions = state.get("open_positions", [])
 
         # Run Quant Sentry Auditor for deep telemetry insights
@@ -366,7 +373,7 @@ class TelegramAlertBot:
             f"• <b>Total Net PnL:</b> {pnl_emoji} <b>{pnl_sign}${abs(daily_pnl):,.2f}</b>\n"
             f"• <b>Total Gains (Wins):</b> 🟢 <b>+${gross_gain:,.2f}</b> ({wins} winning trades)\n"
             f"• <b>Total Losses:</b> 🔴 <b>-${abs(gross_loss):,.2f}</b> ({losses} losing trades)\n"
-            f"• <b>Win Rate:</b> {wr:.1f}% ({trades_count} total closed){insights_str}\n\n"
+            f"• <b>Win Rate:</b> {wr:.1f}% ({total_lifetime} total closed){insights_str}\n\n"
             f"📊 <b>ACTIVE POSITIONS ({len(positions)}):</b>{pos_str}\n\n"
             f"⚙️ <i>Sentry Active • Send <code>/audit</code> for full research drill-down</i>"
         )
@@ -778,7 +785,8 @@ class TelegramAlertBot:
         trades_count = int(state.get("daily_trades_count", 0))
         wins = int(state.get("wins", 0))
         losses = int(state.get("losses", 0))
-        wr = (wins / trades_count * 100.0) if trades_count > 0 else 0.0
+        total_lifetime = wins + losses
+        wr = (wins / total_lifetime * 100.0) if total_lifetime > 0 else 0.0
 
         bar = make_progress_bar(pnl, target, length=10)
         pnl_sign = "+" if pnl >= 0 else "-"

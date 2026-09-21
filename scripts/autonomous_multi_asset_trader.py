@@ -115,6 +115,7 @@ class AutonomousMultiAssetTrader:
     ):
         self.auto_start = auto_start
         self.freeze_universe = freeze_universe
+        self.invert_signals = str(os.environ.get("QV_INVERT_SIGNALS", "false")).lower() in ["true", "1"]
         # Frozen experiment universe: GOLD first, then TOP_20, de-duplicated.
         # Fixed for the life of the process so forward results are
         # reproducible and attributable to the signal, not to rotation.
@@ -782,6 +783,7 @@ class AutonomousMultiAssetTrader:
 
         return {
             "running": self.is_running,
+            "invert_signals": getattr(self, "invert_signals", False),
             "thread_alive": bool(self.worker_thread is not None and self.worker_thread.is_alive()),
             "seconds_since_tick": round(time.time() - float(getattr(self, "_last_tick_ts", 0.0)), 1) if getattr(self, "_last_tick_ts", 0.0) else None,
             "price_fetch_failures": int(getattr(self, "_price_fetch_failures", 0)),
@@ -1240,6 +1242,10 @@ class AutonomousMultiAssetTrader:
                 "ev_usd": sig["ev_usd"],
                 "action": f"STRIKE CANDIDATE: LONG {symbol} @ ${price:,.2f} (SL: -{sl_pct*100:.2f}%, TP1: +{tp1_pct*100:.2f}%)"
             }
+            if getattr(self, "invert_signals", False):
+                sig["original_side"] = sig["side"]
+                sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
+                sig["signal_inverted"] = True
             return sig
 
         elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.35 and rsi_14 <= 48 and rvol >= 1.20:
@@ -1312,6 +1318,10 @@ class AutonomousMultiAssetTrader:
                 "ev_usd": sig["ev_usd"],
                 "action": f"STRIKE CANDIDATE: SHORT {symbol} @ ${price:,.2f} (SL: +{sl_pct*100:.2f}%, TP1: -{tp1_pct*100:.2f}%)"
             }
+            if getattr(self, "invert_signals", False):
+                sig["original_side"] = sig["side"]
+                sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
+                sig["signal_inverted"] = True
             return sig
 
         # 2. Deep Elastic Mean Reversion
@@ -1382,6 +1392,10 @@ class AutonomousMultiAssetTrader:
                     "ev_usd": sig["ev_usd"],
                     "action": f"STRIKE CANDIDATE: MEAN-REV LONG {symbol} @ ${price:,.2f}"
                 }
+                if getattr(self, "invert_signals", False):
+                    sig["original_side"] = sig["side"]
+                    sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
+                    sig["signal_inverted"] = True
                 return sig
 
             elif robust_z >= 2.00 and rsi_14 >= 72:
@@ -1450,6 +1464,10 @@ class AutonomousMultiAssetTrader:
                     "ev_usd": sig["ev_usd"],
                     "action": f"STRIKE CANDIDATE: MEAN-REV SHORT {symbol} @ ${price:,.2f}"
                 }
+                if getattr(self, "invert_signals", False):
+                    sig["original_side"] = sig["side"]
+                    sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
+                    sig["signal_inverted"] = True
                 return sig
 
         self._log_decision(symbol, "REJECTED", "NO_SETUP_MATCHED", {
@@ -1691,6 +1709,10 @@ class AutonomousMultiAssetTrader:
             "unrealized_pnl_usd": 0.0
         }
 
+        if signal.get("signal_inverted"):
+            position["signal_inverted"] = True
+            position["original_side"] = signal.get("original_side")
+
         # Entry costs are realized the moment we pay them. LEDGER-FIRST: the
         # ENTRY event must be durably recorded BEFORE the position enters
         # the book — a position with no ENTRY event would corrupt every
@@ -1716,7 +1738,7 @@ class AutonomousMultiAssetTrader:
         self.open_positions[symbol] = position
         self._save_positions()
 
-        self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", {
+        log_payload = {
             "setup": position.get("setup"),
             "side": position.get("side"),
             "entry_price": price,
@@ -1728,8 +1750,11 @@ class AutonomousMultiAssetTrader:
             "jev_trap_risk": position.get("jev_trap_risk"),
             "hurst": position.get("hurst"),
             "robust_z": position.get("robust_z"),
-            "rvol": position.get("rvol"),
-        })
+        }
+        if position.get("signal_inverted"):
+            log_payload["signal_inverted"] = True
+            log_payload["original_side"] = position.get("original_side")
+        self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", log_payload)
 
         thought = f"[{time.strftime('%H:%M:%S UTC')}] ⚡ STRIKE: {position['side']} {symbol} @ ${price:,.2f} | Size: ${position['notional_usd']:,.0f} (Margin: ${position['margin_collateral_usd']:,.0f}) | TP1: ${tp1:,.2f} (BE Armed)"
         self._add_thought(thought)
@@ -2068,6 +2093,8 @@ class AutonomousMultiAssetTrader:
                     "mode": pos["mode"],
                     "duration_sec": int(duration)
                 }
+                if pos.get("signal_inverted"):
+                    trade_record["signal_inverted"] = True
                 if not self._record_closed_trade(trade_record):
                     # The ledger already holds every leg of this close; the
                     # history file is a secondary index. Loud, not silent —

@@ -128,6 +128,12 @@ async function refreshHeader() {
   if (!s) return;
   state.status = s;
 
+  const invBadge = document.getElementById("inverted-badge");
+  if (invBadge) {
+    invBadge.style.display = s.invert_signals ? "inline-block" : "none";
+  }
+
+
   const eq = (s.equity_usd !== undefined && s.equity_usd !== null)
     ? s.equity_usd
     : (state.overview ? state.overview.equity_usd : null);
