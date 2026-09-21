@@ -86,6 +86,7 @@ def isolated_trader(tmp_path):
     trader.open_positions = {}
     # Deterministic fills: no network in tests.
     trader.execution_adapter.fill_simulator = StubFillSimulator()
+    trader.PRICE_CACHE_TTL_SEC = 0  # tests drive ticks manually; never serve a cached price
     return trader
 
 

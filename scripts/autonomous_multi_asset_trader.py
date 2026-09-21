@@ -56,13 +56,23 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+
+class LedgerWriteError(RuntimeError):
+    """The PnL ledger append failed. The ledger is the book of record:
+    when it cannot be written, position state must NOT advance and the
+    caller must fail loudly (never silently diverge)."""
+
 PROJECT_ROOT = Path(r"d:\5 minute btc\5min-btc-polymarket")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.binance_execution_adapter import BinanceExecutionAdapter
 from scripts.telegram_alert_bot import TelegramAlertBot
-from scripts.binance_universe_scanner import BinanceUniverseScanner
+from scripts.binance_universe_scanner import (
+    BinanceUniverseScanner,
+    GOLD_SYMBOLS,
+    TOP_20_SYMBOLS,
+)
 from scripts.episodic_memory_engine import EpisodicMemoryEngine
 from scripts.order_flow_engine import OrderFlowEngine
 from scripts.order_book_engine import OrderBookEngine
@@ -74,6 +84,18 @@ from scripts.paper_fill_simulator import PaperFillSimulator, TP_WORKING_WAIT_SEC
 
 
 class AutonomousMultiAssetTrader:
+    # Price-cache TTL for the 1-second management loop: with 1s ticks a
+    # 2s TTL means roughly every other tick refreshes per symbol.
+    PRICE_CACHE_TTL_SEC = 2.0
+    # While the light ticker is failing, the heavy 100-kline fallback may
+    # be attempted at most once per symbol per this interval. 60s keeps a
+    # 15-position book to ~0.25 heavy req/s during an outage instead of 15/s.
+    HEAVY_FALLBACK_INTERVAL_SEC = 60.0
+    # Process-wide registry of runtime dirs currently held by a started
+    # trader in THIS process: the PID file guards across processes, this
+    # guards two trader objects in one process.
+    _held_runtime_locks = set()
+
     def __init__(
         self,
         core_assets: Optional[List[str]] = None,
@@ -85,9 +107,19 @@ class AutonomousMultiAssetTrader:
         daily_profit_target_usd: float = 2_000.0,  # $2,000 (+2% daily target)
         daily_loss_limit_usd: float = 2_000.0,     # -$2,000 (-2% circuit breaker)
         runtime_dir: str = None,                   # default: <repo>/runtime
-        auto_start: bool = True
+        auto_start: bool = True,
+        freeze_universe: bool = True,            # fixed symbol list for the
+        # paper experiment: a dynamic universe confounds attribution (was it
+        # the signal or the rotation?). The frozen list is GOLD + TOP_20.
+        # Set False to let the universe scanner rotate the watchlist.
     ):
         self.auto_start = auto_start
+        self.freeze_universe = freeze_universe
+        # Frozen experiment universe: GOLD first, then TOP_20, de-duplicated.
+        # Fixed for the life of the process so forward results are
+        # reproducible and attributable to the signal, not to rotation.
+        self._frozen_universe: List[str] = list(dict.fromkeys(
+            list(GOLD_SYMBOLS) + list(TOP_20_SYMBOLS)))
         self.max_concurrent_positions = max_concurrent_positions
         self.notional_per_trade_usd = notional_per_trade_usd
         self.leverage = leverage
@@ -101,6 +133,7 @@ class AutonomousMultiAssetTrader:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
 
         self.positions_file = self.runtime_dir / "autonomous_positions.json"
+        self.pending_entries_file = self.runtime_dir / "pending_entries.json"
         self.history_file = self.runtime_dir / "autonomous_trade_history.json"
         self.state_file = self.runtime_dir / "autonomous_state.json"
         # Append-only decision log (JSONL): one line per signal evaluation.
@@ -134,13 +167,30 @@ class AutonomousMultiAssetTrader:
         self.worker_thread: Optional[threading.Thread] = None
         self.lock = threading.RLock()
 
+        # Lightweight per-tick price feed (M4): the 1-second management
+        # loop only needs the current price, not a 100-kline lookback
+        # (weight 10 per position per second would breach Binance limits
+        # with a full book). Prices are served from a short-TTL shared
+        # cache refreshed via the ticker endpoint; the heavy klines fetch
+        # is kept for signal evaluation and as a fallback.
+        self._price_cache: Dict[str, Dict[str, Any]] = {}
+        self._price_fetch_failures: int = 0
+        self._heavy_fallback_attempt_ts: Dict[str, float] = {}
+        self._light_price_feed_enabled: bool = False  # enabled by start()
+        self._last_tick_ts: float = 0.0
+
         self.open_positions: Dict[str, Dict[str, Any]] = self._load_positions()
         # Pending entry working orders: symbol -> {order_id, signal, qty,
         # price, filled_qty, fee_usd, placed_ts}. A signal becomes a position
         # only when its post-only maker order actually fills (polled each
-        # tick against post-placement market activity). In-memory only: a
-        # restart simply drops unfilled pending entries — no phantom fills.
-        self.pending_entries: Dict[str, Dict[str, Any]] = {}
+        # tick against post-placement market activity). Persisted to
+        # pending_entries.json, but NEVER restored as live orders: the paper
+        # venue is memory-only too, so every persisted pending entry's venue
+        # order died with the process. _reconcile_pending_entries terminally
+        # logs each as ENTRY_ORDER_LOST_ON_RESTART (a complete decision trail
+        # — no silent holes) and drops it. The scanner re-signals naturally
+        # if the setup is still valid.
+        self.pending_entries: Dict[str, Dict[str, Any]] = self._reconcile_pending_entries()
         self.daily_pnl_usd: float = 0.0
         self.daily_trades_count: int = 0
         self.daily_reset_date: str = time.strftime("%Y-%m-%d", time.gmtime())
@@ -181,19 +231,74 @@ class AutonomousMultiAssetTrader:
             if len(self.thought_stream) > 25:
                 self.thought_stream = self.thought_stream[-25:]
 
+    def _reconcile_pending_entries(self) -> Dict[str, Dict[str, Any]]:
+        """Startup reconciliation for persisted pending entry orders.
+
+        Returns {} always — pending entries are never restored as live
+        orders (their venue orders died with the process). Each persisted
+        entry is terminally logged as ENTRY_ORDER_LOST_ON_RESTART so the
+        decision trail has no silent holes: this is experiment telemetry,
+        and a restart that drops live orders is experiment-invalidating
+        for any fill-rate analysis covering that window.
+        """
+        try:
+            if self.pending_entries_file.exists():
+                data = json.loads(self.pending_entries_file.read_text(encoding="utf-8"))
+                for symbol, pe in data.items():
+                    if not isinstance(pe, dict):
+                        continue
+                    self._log_decision(symbol, "REJECTED", "ENTRY_ORDER_LOST_ON_RESTART", {
+                        "order_id": pe.get("order_id"),
+                        "side": pe.get("side"),
+                        "limit_price": pe.get("limit_price"),
+                        "requested_qty": pe.get("requested_qty"),
+                        "filled_qty": pe.get("filled_qty", 0.0),
+                    })
+                    logger.warning(
+                        f"[TRADER] Pending entry {symbol} (order {pe.get('order_id')}) "
+                        f"died with the previous process — logged, not restored."
+                    )
+        except Exception as e:
+            logger.error(f"[TRADER] Failed to reconcile pending entries: {e}")
+        # Reset the file so a second restart does not re-log the same drops.
+        try:
+            self.pending_entries_file.write_text(json.dumps({}, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return {}
+
+    def _save_pending_entries(self):
+        # Locked, best-effort: pending entries are small and change rarely
+        # (stage/fill/cancel), so this is called on mutation, not per tick.
+        with self.lock:
+            try:
+                self.pending_entries_file.write_text(
+                    json.dumps(self.pending_entries, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
     def _load_positions(self) -> Dict[str, Dict[str, Any]]:
         try:
             if self.positions_file.exists():
-                return json.loads(self.positions_file.read_text(encoding="utf-8"))
+                positions = json.loads(self.positions_file.read_text(encoding="utf-8"))
+                # A crash may have persisted a half-set _closing flag; it is
+                # a runtime claim, not durable state — always clear it, or
+                # the position could never be closed after a restart.
+                for pos in positions.values():
+                    if isinstance(pos, dict):
+                        pos.pop("_closing", None)
+                return positions
         except Exception:
             pass
         return {}
 
     def _save_positions(self):
-        try:
-            self.positions_file.write_text(json.dumps(self.open_positions, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        # Locked: the run loop and Telegram/manual closes both write here.
+        with self.lock:
+            try:
+                self.positions_file.write_text(json.dumps(self.open_positions, indent=2), encoding="utf-8")
+            except Exception:
+                pass
 
     def _load_state(self):
         try:
@@ -218,32 +323,54 @@ class AutonomousMultiAssetTrader:
             pass
 
     def _save_state(self):
-        try:
-            cur_date = time.strftime("%Y-%m-%d", time.gmtime())
-            data = {
-                "enabled": self.is_running,
-                "date": cur_date,
-                "daily_pnl_usd": round(self.daily_pnl_usd, 2),
-                "daily_trades_count": self.daily_trades_count,
-                "circuit_breaker_triggered": self.circuit_breaker_triggered,
-                "daily_goal_reached": self.daily_goal_reached,
-                "account_balance_usd": self.account_balance_usd,
-                "max_daily_allocation_usd": self.max_daily_allocation_usd,
-                "last_update": time.time()
-            }
-            self.state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        # Locked: shares the state file with the run loop's heartbeat.
+        with self.lock:
+            try:
+                self._write_state_locked()
+            except Exception:
+                pass
 
-    def _record_closed_trade(self, trade_record: Dict[str, Any]):
-        try:
-            history = []
-            if self.history_file.exists():
-                history = json.loads(self.history_file.read_text(encoding="utf-8"))
-            history.append(trade_record)
-            self.history_file.write_text(json.dumps(history[-500:], indent=2), encoding="utf-8")
-        except Exception:
-            pass
+    def _write_state_locked(self):
+        """Write the state file. Caller must hold self.lock."""
+        cur_date = time.strftime("%Y-%m-%d", time.gmtime())
+        data = {
+            "enabled": self.is_running,
+            "date": cur_date,
+            "daily_pnl_usd": round(self.daily_pnl_usd, 2),
+            "daily_trades_count": self.daily_trades_count,
+            "circuit_breaker_triggered": self.circuit_breaker_triggered,
+            "daily_goal_reached": self.daily_goal_reached,
+            "account_balance_usd": self.account_balance_usd,
+            "max_daily_allocation_usd": self.max_daily_allocation_usd,
+            "last_update": time.time(),
+            "last_tick_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(getattr(self, "_last_tick_ts", time.time())))),
+            "worker_alive": bool(getattr(self, "worker_thread", None) is not None and self.worker_thread.is_alive()),
+        }
+        self.state_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def _record_closed_trade(self, trade_record: Dict[str, Any]) -> bool:
+        # Locked: the run loop and Telegram/manual closes both append here;
+        # the old read-modify-write could lose records under concurrency.
+        # No truncation: the history file is the lifetime record and must
+        # stay in agreement with the unbounded ledger.
+        # Returns True only when the record is durably appended. A failure
+        # is LOUD (never silently swallowed): the economic close already
+        # happened in the ledger, so the caller must report the gap, not
+        # pretend the history is complete.
+        with self.lock:
+            try:
+                history = []
+                if self.history_file.exists():
+                    history = json.loads(self.history_file.read_text(encoding="utf-8"))
+                history.append(trade_record)
+                self.history_file.write_text(json.dumps(history, indent=2), encoding="utf-8")
+                return True
+            except Exception as e:
+                logger.error(
+                    f"[TRADER] FAILED to append closed-trade history for "
+                    f"{trade_record.get('symbol')} trade {trade_record.get('trade_id')}: {e}"
+                )
+                return False
 
     def _log_decision(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None):
         """
@@ -251,19 +378,22 @@ class AutonomousMultiAssetTrader:
         REJECTED, SKIPPED. Called at every signal gate so the paper experiment
         has a complete, reproducible decision trail — including rejections.
         """
-        try:
-            record = {
-                "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-                "ts_epoch": time.time(),
-                "symbol": symbol,
-                "outcome": outcome,
-                "reason": reason,
-                "details": details or {},
-            }
-            with open(self.decision_log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record) + "\n")
-        except Exception as e:
-            logger.warning(f"[DECISION-LOG] Failed to append decision record: {e}")
+        # Locked: concurrent appends from the run loop and Telegram/manual
+        # closes must not interleave bytes mid-line (torn JSONL).
+        with self.lock:
+            try:
+                record = {
+                    "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+                    "ts_epoch": time.time(),
+                    "symbol": symbol,
+                    "outcome": outcome,
+                    "reason": reason,
+                    "details": details or {},
+                }
+                with open(self.decision_log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record) + "\n")
+            except Exception as e:
+                logger.warning(f"[DECISION-LOG] Failed to append decision record: {e}")
 
     # ------------------------------------------------------------------
     # Realized-PnL ledger: the single source of truth for money.
@@ -279,9 +409,14 @@ class AutonomousMultiAssetTrader:
         fee_usd: float,
         realized_pnl_usd: float,
         funding_usd: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> bool:
         """Append one immutable fill event. The ONLY method that mutates
-        daily_pnl_usd, so daily PnL can never diverge from the ledger."""
+        daily_pnl_usd, so daily PnL can never diverge from the ledger.
+
+        LEDGER-FIRST: returns True only when the event is durably appended.
+        Callers must mutate position state ONLY on True; on False they must
+        fail loudly (raise LedgerWriteError), never advance the books
+        silently. If the append fails, daily_pnl_usd is left untouched."""
         event = {
             "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
             "date_utc": time.strftime("%Y-%m-%d", time.gmtime()),
@@ -296,13 +431,23 @@ class AutonomousMultiAssetTrader:
             "funding_usd": round(funding_usd, 4),
             "realized_pnl_usd": round(realized_pnl_usd, 2),
         }
-        try:
-            with open(self.pnl_ledger_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event) + "\n")
-        except Exception as e:
-            logger.warning(f"[PNL-LEDGER] Failed to append fill event: {e}")
-        self.daily_pnl_usd = round(self.daily_pnl_usd + realized_pnl_usd, 2)
-        return event
+        # Locked AND atomic: the ledger append and the daily-PnL mutation
+        # happen as one unit. If the append fails, daily_pnl_usd is left
+        # untouched and False is returned — the caller must NOT book the
+        # event anywhere else.
+        with self.lock:
+            try:
+                with open(self.pnl_ledger_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event) + "\n")
+            except Exception as e:
+                logger.error(
+                    f"[PNL-LEDGER] FAILED to append fill event for {symbol} "
+                    f"leg={leg} pnl={realized_pnl_usd}: {e}. daily_pnl_usd NOT "
+                    f"mutated — caller must fail loudly, not diverge."
+                )
+                return False
+            self.daily_pnl_usd = round(self.daily_pnl_usd + realized_pnl_usd, 2)
+        return True
 
     def _apply_exit_leg(self, pos: Dict[str, Any], leg: str, fill: Dict[str, Any], exit_side: str) -> float:
         """Book a simulated exit fill against a position.
@@ -329,6 +474,27 @@ class AutonomousMultiAssetTrader:
         else:
             gross = (entry_avg - float(fill["avg_price"])) * exit_qty
         realized = round(gross - float(fill["fee_usd"]), 2)
+        # LEDGER-FIRST: the event must be durably recorded BEFORE any
+        # position state advances. If the ledger write fails, the position
+        # is left completely untouched and the failure is loud — the
+        # caller releases its close claim so the close can be retried.
+        # (The old order mutated the position first, so a ledger failure
+        # left booked-but-unrecorded state: silent divergence.)
+        persisted = self._record_fill_event(
+            trade_id=pos.get("id", f"trade_{int(time.time())}"),
+            symbol=pos["symbol"],
+            leg=leg,
+            side=exit_side,
+            qty=exit_qty,
+            price=fill["avg_price"],
+            fee_usd=fill["fee_usd"],
+            realized_pnl_usd=realized,
+        )
+        if not persisted:
+            raise LedgerWriteError(
+                f"ledger append failed for {pos['symbol']} leg={leg}; "
+                f"position state NOT advanced"
+            )
         pos["realized_pnl_usd"] = round(float(pos.get("realized_pnl_usd", 0.0)) + realized, 2)
         pos["remaining_quantity"] = round(float(pos.get("remaining_quantity", pos["quantity"])) - exit_qty, 4)
         pos.setdefault("legs", []).append({
@@ -340,28 +506,29 @@ class AutonomousMultiAssetTrader:
             "realized_pnl_usd": realized,
             "ts_utc": fill.get("timestamp_utc"),
         })
-        self._record_fill_event(
-            trade_id=pos.get("id", f"trade_{int(time.time())}"),
-            symbol=pos["symbol"],
-            leg=leg,
-            side=exit_side,
-            qty=exit_qty,
-            price=fill["avg_price"],
-            fee_usd=fill["fee_usd"],
-            realized_pnl_usd=realized,
-        )
         return realized
 
     def _fee_protected_be(self, pos: Dict[str, Any]) -> float:
-        """Break-even stop where a taker exit nets >= 0 after entry fee,
-        exit fee, and accrued funding. Replaces the old fixed 0.03% buffer,
-        which did not actually cover costs."""
+        """Total-trade break-even stop for the runner quantity.
+
+        The runner exit must make the WHOLE trade net >= 0, so the cost it
+        has to recover is -(everything booked so far):
+          - before any scale-out: realized = -entry_fee - funding
+            -> classic break-even just above entry;
+          - after a banked TP1: realized = banked - entry_fee - funding
+            -> the banked profit already paid the costs, so the honest
+            risk-free level can sit BELOW entry (a normal pullback no
+            longer amputates the runner).
+        The old code charged 100% of entry fee + funding against the
+        runner while ignoring banked TP1 profit — a profit-lock mislabeled
+        "break-even" that systematically chopped winners.
+        """
+        realized_so_far = float(pos.get("realized_pnl_usd", 0.0))
         return PaperFillSimulator.fee_protected_break_even(
             entry_avg_price=float(pos.get("entry_avg_price", pos["entry_price"])),
             quantity=float(pos.get("remaining_quantity", pos["quantity"])),
             is_long=(pos["side"] == "LONG"),
-            entry_fee_usd=float(pos.get("entry_fee_usd", 0.0)),
-            funding_paid_usd=float(pos.get("funding_paid_usd", 0.0)),
+            sunk_cost_usd=-realized_so_far,
         )
 
     @staticmethod
@@ -378,9 +545,13 @@ class AutonomousMultiAssetTrader:
         """Charge one flat funding interval per 8h UTC window (00/08/16).
         Conservative: always charged to the position, never credited.
 
-        STAMP ORDER MATTERS: a position younger than 5 minutes is stamped
-        "not due" for the current window — it is never marked "processed"
-        without being charged, so no funding window can ever be skipped.
+        STAMP ORDER MATTERS: the window is stamped ONLY when an eligible
+        charge is actually attempted. A position younger than 5 minutes is
+        not charged yet — and crucially it is NOT stamped either, so it
+        retries next tick and still pays for the current window once old
+        enough. No funding window can ever be skipped by stamping-without-
+        charging (the bug this docstring previously described while the
+        code did the opposite).
         The charge is booked exactly ONCE here (single-booking convention);
         exit legs must not subtract funding again."""
         cur_day = time.strftime("%Y-%m-%d", time.gmtime())
@@ -388,14 +559,19 @@ class AutonomousMultiAssetTrader:
         key = f"{cur_day}-{window}"
         if pos.get("last_funding_window") == key:
             return 0.0
-        pos["last_funding_window"] = key
         if time.time() - float(pos.get("open_time", time.time())) < 300:
-            self._save_positions()
-            return 0.0  # positions under 5 minutes old are not charged
+            # Too young to charge: do NOT stamp the window. The position
+            # retries next tick and pays for this window once old enough.
+            # (Stamping here without charging is what silently skipped the
+            # first window for positions opened just before a boundary.)
+            return 0.0
+        # Stamp ONLY when an eligible charge is actually persisted below.
+        # LEDGER-FIRST: if the ledger append fails, nothing is stamped and
+        # nothing is mutated — the charge retries next tick. Stamping or
+        # mutating before a confirmed write is what created silent
+        # funding divergence.
         funding = PaperFillSimulator.compute_funding(notional_usd)
-        pos["funding_paid_usd"] = round(float(pos.get("funding_paid_usd", 0.0)) + funding, 2)
-        pos["realized_pnl_usd"] = round(float(pos.get("realized_pnl_usd", 0.0)) - funding, 2)
-        self._record_fill_event(
+        persisted = self._record_fill_event(
             trade_id=pos.get("id", f"trade_{int(time.time())}"),
             symbol=pos["symbol"],
             leg="FUNDING",
@@ -406,6 +582,14 @@ class AutonomousMultiAssetTrader:
             realized_pnl_usd=-funding,
             funding_usd=funding,
         )
+        if not persisted:
+            raise LedgerWriteError(
+                f"ledger append failed for {pos['symbol']} FUNDING; "
+                f"window NOT stamped, charge will retry"
+            )
+        pos["last_funding_window"] = key
+        pos["funding_paid_usd"] = round(float(pos.get("funding_paid_usd", 0.0)) + funding, 2)
+        pos["realized_pnl_usd"] = round(float(pos.get("realized_pnl_usd", 0.0)) - funding, 2)
         return funding
 
     def _reconcile_daily_pnl(self):
@@ -459,44 +643,124 @@ class AutonomousMultiAssetTrader:
         return round(self.account_balance_usd + self._lifetime_realized_pnl(), 2)
 
     def start(self) -> Dict[str, Any]:
-        # HARD PAPER-ONLY GUARD: the trader can never start in live mode
-        # unless the explicit live-trading confirmation is present. This is
-        # defense in depth — the adapter itself also refuses live mode.
+        # HARD PAPER-ONLY GUARD: live trading is permanently disabled. If a
+        # live-mode adapter were ever smuggled past construction, the trader
+        # refuses to start — unconditionally. No confirmation flag, env var,
+        # or credential can override this; the adapter itself also refuses.
         adapter = getattr(self, "execution_adapter", None)
         if adapter is not None and getattr(adapter, "mode", "paper") == "live":
-            from scripts.binance_execution_adapter import BinanceExecutionAdapter
-            if not BinanceExecutionAdapter.live_trading_allowed():
-                raise RuntimeError(
-                    "LIVE mode REFUSED by the paper-only guard: set "
-                    "QUANT_VAULT_ENABLE_LIVE_TRADING='I_UNDERSTAND_THE_RISK' "
-                    "and provide Binance API credentials, or run in paper mode.")
+            raise RuntimeError(
+                "LIVE mode REFUSED by the paper-only guard: live trading is "
+                "permanently disabled in this build (paper trading only).")
         with self.lock:
             if self.is_running and self.worker_thread and self.worker_thread.is_alive():
                 return {"success": True, "status": "already_running"}
+            # Single-instance guard: two processes trading against the same
+            # runtime files would double-book fills and clobber state.
+            if not self._acquire_instance_lock():
+                return {"success": False,
+                        "error": "another trader instance holds the runtime lock"}
             self.is_running = True
+            self._light_price_feed_enabled = True
             self._save_state()
-            self.worker_thread = threading.Thread(target=self._run_loop, daemon=True, name="QuantTraderDaemon")
-            self.worker_thread.start()
+            try:
+                self.worker_thread = threading.Thread(target=self._run_loop, daemon=True, name="QuantTraderDaemon")
+                self.worker_thread.start()
+            except Exception:
+                # Thread construction/start failed: unwind everything the
+                # start claimed, or the instance lock would be held forever
+                # with no thread running and no restart possible.
+                self.is_running = False
+                self.worker_thread = None
+                self._release_instance_lock()
+                raise
             self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] 🚀 Autonomous Quant Vault ACTIVATED! 35-Asset Universe scanning active.")
             print(f"[QUANT VAULT] Autopilot started! Sizing: ${self.notional_per_trade_usd:,.0f} notional @ {self.leverage}x | 15 Max Positions | $100K Bankroll")
             return {"success": True, "status": "started"}
 
+    def _acquire_instance_lock(self) -> bool:
+        """PID-file single-instance guard under runtime_dir.
+
+        Refuses to start if the lock file names a live process other than
+        this one. A lock naming a dead PID is stale (crash) and is taken
+        over. The file is removed by stop().
+        """
+        pid_file = self.runtime_dir / "trader.pid"
+        runtime_key = str(self.runtime_dir.resolve())
+        try:
+            if runtime_key in AutonomousMultiAssetTrader._held_runtime_locks:
+                logger.error(
+                    f"[INSTANCE-LOCK] Refusing start: another trader in this "
+                    f"process already holds {self.runtime_dir}.")
+                return False
+            if pid_file.exists():
+                try:
+                    old_pid = int(pid_file.read_text(encoding="utf-8").strip())
+                except (ValueError, OSError):
+                    old_pid = None
+                if old_pid and old_pid != os.getpid():
+                    try:
+                        os.kill(old_pid, 0)
+                    except ProcessLookupError:
+                        old_pid = None  # stale lock from a dead process
+                    except PermissionError:
+                        pass  # process exists but isn't ours -> keep refusing
+                    except OSError:
+                        old_pid = None
+                    if old_pid:
+                        logger.error(
+                            f"[INSTANCE-LOCK] Refusing start: PID {old_pid} "
+                            f"already holds {pid_file}.")
+                        return False
+            pid_file.write_text(str(os.getpid()), encoding="utf-8")
+            AutonomousMultiAssetTrader._held_runtime_locks.add(runtime_key)
+            return True
+        except Exception as e:
+            logger.error(f"[INSTANCE-LOCK] Could not acquire {pid_file}: {e}")
+            return False
+
+    def _release_instance_lock(self):
+        pid_file = self.runtime_dir / "trader.pid"
+        try:
+            runtime_key = str(self.runtime_dir.resolve())
+        except Exception:
+            runtime_key = None
+        if runtime_key:
+            AutonomousMultiAssetTrader._held_runtime_locks.discard(runtime_key)
+        try:
+            if pid_file.exists():
+                try:
+                    if int(pid_file.read_text(encoding="utf-8").strip()) == os.getpid():
+                        pid_file.unlink()
+                except (ValueError, OSError):
+                    pass
+        except Exception:
+            pass
+
     def stop(self) -> Dict[str, Any]:
         with self.lock:
             self.is_running = False
+            self._light_price_feed_enabled = False
+            self._release_instance_lock()
             self._save_state()
-            self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] ⏸️ Autonomous Quant Vault PAUSED. Open positions remain actively risk-managed.")
-            print("[QUANT VAULT] Autopilot paused.")
+            self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] ⏸️ Autonomous Quant Vault PAUSED. ⚠️ Open positions are NOT actively managed while paused — stops and TPs will not trigger until resume.")
+            print("[QUANT VAULT] Autopilot paused. NOTE: risk management is paused too — resume to re-arm stops/TPs.")
             return {"success": True, "status": "stopped"}
 
-    def get_status(self) -> Dict[str, Any]:
+    def _maybe_rollover_day(self):
+        """Roll the daily counters at UTC midnight. Lives in the RUN LOOP
+        (called every tick), not just in get_status(): a headless run must
+        reset the "daily" values even if nobody ever opens the dashboard.
+        Rebuilds from the immutable records — never assumes a clean zero."""
         cur_date = time.strftime("%Y-%m-%d", time.gmtime())
         if cur_date != self.daily_reset_date:
             self.daily_reset_date = cur_date
-            # Rebuild from the immutable records — never assume a clean zero.
             self._reconcile_daily_pnl()
             self.circuit_breaker_triggered = False
             self.daily_goal_reached = False
+
+    def get_status(self) -> Dict[str, Any]:
+        self._maybe_rollover_day()
 
         total_margin_used = sum(float(p.get("margin_collateral_usd", 1000.0)) for p in self.open_positions.values())
         allocation_pct = round((total_margin_used / self.max_daily_allocation_usd) * 100.0, 1) if self.max_daily_allocation_usd > 0 else 0.0
@@ -513,6 +777,12 @@ class AutonomousMultiAssetTrader:
 
         return {
             "running": self.is_running,
+            "thread_alive": bool(self.worker_thread is not None and self.worker_thread.is_alive()),
+            "seconds_since_tick": round(time.time() - float(getattr(self, "_last_tick_ts", 0.0)), 1) if getattr(self, "_last_tick_ts", 0.0) else None,
+            "price_fetch_failures": int(getattr(self, "_price_fetch_failures", 0)),
+            "history_write_failures": int(getattr(self, "history_write_failures", 0)),
+            "universe_frozen": bool(self.freeze_universe),
+            "universe_symbols": list(self._frozen_universe) if self.freeze_universe else [],
             "mode_name": "INSTITUTIONAL_QUANT_VAULT_100K",
             "account_balance_usd": self.account_balance_usd,
             "balance_usd": self.account_balance_usd,
@@ -592,17 +862,23 @@ class AutonomousMultiAssetTrader:
         elif action == "resume":
             return self.start()
         elif action == "close":
+            # Route unconditionally through close_position: it claims the
+            # close atomically (racing the run loop safely), cancels any
+            # pending entry for the symbol, and reports honestly when there
+            # is nothing to close. The old gate on `symbol in open_positions`
+            # could not reach the pending-entry cancellation at all.
             symbol = payload.get("symbol", "").upper()
-            if symbol in self.open_positions:
-                res = self.close_position(symbol, reason="REMOTE_TELEGRAM_CLOSE")
-                if res.get("success"):
-                    return {"success": True, "closed": symbol, "trade": res.get("trade")}
-                return {"success": False, "error": res.get("error", "close_failed")}
-            return {"success": False, "error": f"{symbol} not active"}
+            res = self.close_position(symbol, reason="REMOTE_TELEGRAM_CLOSE")
+            if res.get("success"):
+                return {"success": True, "closed": symbol, "trade": res.get("trade")}
+            return {"success": False, "error": res.get("error", "close_failed")}
         elif action == "closeall":
-            closed_syms = list(self.open_positions.keys())
+            # Pending entries are commitments too: close_position cancels
+            # them, so sweep both books.
+            symbols = list(dict.fromkeys(list(self.open_positions.keys())
+                                         + list(self.pending_entries.keys())))
             results = []
-            for sym in closed_syms:
+            for sym in symbols:
                 res = self.close_position(sym, reason="REMOTE_TELEGRAM_CLOSEALL")
                 results.append({"symbol": sym, "success": res.get("success"),
                                 "error": res.get("error")})
@@ -611,11 +887,11 @@ class AutonomousMultiAssetTrader:
         return {"success": False, "error": f"Unknown action: {action}"}
 
     def _fetch_market_data(self, symbol: str) -> Optional[Dict[str, Any]]:
-        # Multi-timeframe institutional lookback: 15m interval with 100 bars (25 hours)
-        if symbol == "PAXGUSDT":
-            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=100"
-        else:
-            url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=15m&limit=100"
+        # Multi-timeframe institutional lookback: 15m interval with 100 bars (25 hours).
+        # ALL symbols use the futures (fapi) feed — the paper book is a
+        # futures book (funding, leverage, shorting), so a spot kline feed
+        # for PAXGUSDT was a data inconsistency.
+        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=15m&limit=100"
 
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -636,6 +912,70 @@ class AutonomousMultiAssetTrader:
                 }
         except Exception:
             return None
+
+    def _fetch_light_price(self, symbol: str) -> Optional[float]:
+        """Single-symbol last price via the Binance futures ticker endpoint
+        (request weight ~1-2, vs 10 for the 100-kline lookback). Used by the
+        1-second management loop, which only needs the current price."""
+        url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                return float(json.loads(resp.read().decode())["price"])
+        except Exception:
+            return None
+
+    def _try_heavy_price(self, symbol: str) -> Optional[float]:
+        """One attempt at the expensive 100-kline lookback, price only."""
+        try:
+            data = self._fetch_market_data(symbol)
+            if data and "price" in data:
+                return float(data["price"])
+        except Exception:
+            pass
+        return None
+
+    def _get_price_tick(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Current price for the per-tick management loop.
+
+        Served from a short-TTL shared cache, refreshed via the lightweight
+        ticker endpoint. Falls back to the full _fetch_market_data lookback
+        only when the light feed is disabled (unit tests drive the stubbed
+        _fetch_market_data directly) or — rate-limited — when the ticker
+        request fails during an outage.
+        Returns None only when every source fails — the caller must skip
+        risk evaluation for that symbol rather than manage from stale data.
+        """
+        now = time.time()
+        cached = self._price_cache.get(symbol)
+        if cached and now - cached["ts"] < self.PRICE_CACHE_TTL_SEC:
+            return {"price": cached["price"], "cached": True}
+        price = None
+        if self._light_price_feed_enabled:
+            try:
+                price = self._fetch_light_price(symbol)
+            except Exception:
+                price = None  # a raising fetcher must never break the tick
+        if price is None:
+            if self._light_price_feed_enabled:
+                # Ticker outage: the heavy 100-kline lookback is attempted
+                # at most once per HEAVY_FALLBACK_INTERVAL_SEC per symbol.
+                # Without this, an outage degrades into 15 positions x 1
+                # heavy request/second — the exact rate-limit storm M4 was
+                # built to prevent. Between attempts the symbol is simply
+                # not managed this tick (the caller skips on None).
+                last = self._heavy_fallback_attempt_ts.get(symbol, 0.0)
+                if now - last >= self.HEAVY_FALLBACK_INTERVAL_SEC:
+                    self._heavy_fallback_attempt_ts[symbol] = now
+                    price = self._try_heavy_price(symbol)
+            else:
+                # Light feed disabled: tests/backfill drive the stubbed
+                # _fetch_market_data directly — no rate limit needed.
+                price = self._try_heavy_price(symbol)
+        if price is None:
+            return None
+        self._price_cache[symbol] = {"price": price, "ts": now}
+        return {"price": price, "cached": False}
 
     def _calc_hurst(self, prices: List[float]) -> float:
         try:
@@ -1121,12 +1461,14 @@ class AutonomousMultiAssetTrader:
         side = signal["side"]
         price = signal["price"]
 
-        # Directional Correlation Guard: Max 3 concurrent Crypto positions to prevent basket drawdown
+        # Directional Correlation Guard: Max 3 concurrent Crypto positions to prevent basket drawdown.
+        # Pending (unfilled) entry orders count as commitments: without
+        # this, 3 resting entries could all fill at once and the cap would
+        # never have fired.
         is_gold = ("XAU" in symbol or "PAXG" in symbol)
-        current_crypto_positions = sum(
-            1 for s in self.open_positions.keys()
-            if "XAU" not in s and "PAXG" not in s
-        )
+        committed_crypto = [s for s in list(self.open_positions.keys()) + list(self.pending_entries.keys())
+                            if "XAU" not in s and "PAXG" not in s]
+        current_crypto_positions = len(committed_crypto)
         if not is_gold and current_crypto_positions >= 3:
             self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] 🛑 Crypto Correlation Cap reached (3 active crypto positions). Skipping {symbol} entry.")
             return
@@ -1180,6 +1522,7 @@ class AutonomousMultiAssetTrader:
             "fee_usd": 0.0,
             "placed_ts": time.time(),
         }
+        self._save_pending_entries()
         self._log_decision(symbol, "PENDING", "ENTRY_WORKING", {
             "side": side,
             "limit_price": float(res["limit_price"]),
@@ -1230,7 +1573,13 @@ class AutonomousMultiAssetTrader:
                         "filled_qty": filled,
                         "requested_qty": pe["requested_qty"],
                     })
-                self._finalize_entry(symbol)
+                try:
+                    self._finalize_entry(symbol)
+                except LedgerWriteError as e:
+                    # The ledger is the book of record: the ENTRY event was
+                    # NOT persisted, so the pending entry is kept and the
+                    # finalize retries next tick. Loud, not silent.
+                    logger.error(f"[TRADER] ENTRY finalize failed for {symbol}: {e}")
             elif status == "EXPIRED":
                 self._log_decision(symbol, "REJECTED", "ENTRY_EXPIRED", {
                     "order_id": pe["order_id"],
@@ -1240,12 +1589,19 @@ class AutonomousMultiAssetTrader:
                 })
                 self.pending_entries.pop(symbol, None)
             # WORKING / PARTIAL: keep waiting for post-placement fills.
+        # Persist the book: any stage/fill/cancel above changed it.
+        self._save_pending_entries()
 
     def _finalize_entry(self, symbol: str):
         """Create the position dict once a pending entry order has filled
         (fully or partially). The entry price is the maker's limit price —
-        post-only fills always happen at the limit."""
-        pe = self.pending_entries.pop(symbol, None)
+        post-only fills always happen at the limit.
+
+        The pending entry is removed ONLY after the ENTRY ledger event is
+        durably recorded. If the ledger write fails, LedgerWriteError is
+        raised and the pending entry stays: the next poll retries the
+        finalize instead of losing a real fill."""
+        pe = self.pending_entries.get(symbol)
         if pe is None:
             return
         if symbol in self.open_positions:
@@ -1255,6 +1611,7 @@ class AutonomousMultiAssetTrader:
             self._log_decision(symbol, "REJECTED", "ENTRY_DUPLICATE_SYMBOL", {
                 "order_id": pe["order_id"],
             })
+            self.pending_entries.pop(symbol, None)
             return
         signal = pe["signal"]
         side = pe["side"]
@@ -1265,6 +1622,7 @@ class AutonomousMultiAssetTrader:
             self._log_decision(symbol, "REJECTED", "ENTRY_ZERO_FILL", {
                 "side": side, "limit_price": price, "order_id": pe["order_id"],
             })
+            self.pending_entries.pop(symbol, None)
             return
         self._create_position(signal, side, qty, price, entry_fee_usd)
 
@@ -1328,11 +1686,11 @@ class AutonomousMultiAssetTrader:
             "unrealized_pnl_usd": 0.0
         }
 
-        self.open_positions[symbol] = position
-        self._save_positions()
-
-        # Entry costs are realized the moment we pay them.
-        self._record_fill_event(
+        # Entry costs are realized the moment we pay them. LEDGER-FIRST: the
+        # ENTRY event must be durably recorded BEFORE the position enters
+        # the book — a position with no ENTRY event would corrupt every
+        # downstream invariant (realized PnL, break-even, history).
+        persisted = self._record_fill_event(
             trade_id=pos_id,
             symbol=symbol,
             leg="ENTRY",
@@ -1342,6 +1700,16 @@ class AutonomousMultiAssetTrader:
             fee_usd=entry_fee_usd,
             realized_pnl_usd=-entry_fee_usd,
         )
+        if not persisted:
+            raise LedgerWriteError(
+                f"ledger append failed for {symbol} ENTRY; position NOT opened"
+            )
+
+        # The ENTRY event is durable: only now retire the pending entry
+        # and publish the position.
+        self.pending_entries.pop(symbol, None)
+        self.open_positions[symbol] = position
+        self._save_positions()
 
         self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", {
             "setup": position.get("setup"),
@@ -1383,16 +1751,38 @@ class AutonomousMultiAssetTrader:
         except Exception as e:
             print(f"[QUANT VAULT] Telegram error: {e}")
 
+    def _try_begin_close(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Atomically claim a position for closing.
+
+        The run loop and Telegram/manual closes race on the same position:
+        whoever claims it first (sets _closing under the lock) owns the
+        exit booking; the loser gets None and must stand down. Without
+        this, a Telegram close landing while the loop books an SL/TP2
+        exit double-books the exit on the same position dict (negative
+        remaining quantity, duplicated ledger events and history records).
+        """
+        with self.lock:
+            pos = self.open_positions.get(symbol)
+            if pos is None or pos.get("_closing"):
+                return None
+            pos["_closing"] = True
+            return pos
+
     def _manage_open_positions(self):
         symbols_to_close = []
         now = time.time()
+        prices_ok = 0
 
         for symbol, pos in list(self.open_positions.items()):
             try:
-                data = self._fetch_market_data(symbol)
-                if not data:
+                # Lightweight cached price tick — NOT the 100-kline fetch.
+                # A missing tick means "do not manage this symbol this
+                # second", never "manage from a stale price".
+                tick = self._get_price_tick(symbol)
+                if not tick:
                     continue
-                cur_price = float(data["price"])
+                prices_ok += 1
+                cur_price = float(tick["price"])
             except Exception:
                 continue
 
@@ -1441,7 +1831,14 @@ class AutonomousMultiAssetTrader:
                 tp1_condition = (cur_price >= pos["tp1"]) if is_long else (cur_price <= pos["tp1"])
                 tp1_order_id = pos.get("tp1_order_id")
                 if tp1_order_id is None and tp1_condition:
-                    scale_qty = round(qty * 0.5, 4)
+                    if pos.pop("_tp1_replacing", False) and pos.get("tp1_target_qty"):
+                        # Order state was lost after partial banking (restart
+                        # wiped the simulator's working orders): re-place the
+                        # ORIGINAL remainder (target - banked), not 50% of
+                        # whatever is left now. Banked partials stay banked.
+                        scale_qty = round(min(qty, pos["tp1_target_qty"] - pos.get("tp1_filled_qty", 0.0)), 4)
+                    else:
+                        scale_qty = round(qty * 0.5, 4)
                     if scale_qty > 0:
                         order = self.execution_adapter.fill_simulator.place_maker_order(
                             symbol, tp_exit_side, scale_qty, pos["tp1"],
@@ -1468,8 +1865,10 @@ class AutonomousMultiAssetTrader:
                     upd_status = upd.get("status")
                     if upd_status == "UNKNOWN":
                         # Order state lost (e.g. restart wiped working orders).
-                        # Banked partials stay banked; re-place the remainder.
+                        # Banked partials stay banked; mark for re-placement
+                        # of the ORIGINAL remainder next tick.
                         pos.pop("tp1_order_id", None)
+                        pos["_tp1_replacing"] = True
                         self._save_positions()
                         self._log_decision(symbol, "PENDING", "TP1_ORDER_LOST", {
                             "reason": upd.get("reason"),
@@ -1588,6 +1987,19 @@ class AutonomousMultiAssetTrader:
             tp2_condition = (cur_price >= pos["tp2"]) if is_long else (cur_price <= pos["tp2"])
 
             if sl_condition or tp2_condition:
+                # Claim the close BEFORE booking anything: a Telegram/manual
+                # close may be racing us on this exact symbol.
+                pos = self._try_begin_close(symbol)
+                if pos is None:
+                    continue  # already closed or being closed elsewhere
+                # The position is closing: cancel any working TP1 scale-out
+                # order so the paper book is not briefly double-offered.
+                tp1_oid = pos.pop("tp1_order_id", None)
+                if tp1_oid:
+                    try:
+                        self.execution_adapter.fill_simulator.cancel_maker_order(tp1_oid)
+                    except Exception:
+                        pass
                 exit_reason = "TP2_RUNNER_TARGET" if tp2_condition else ("BREAK_EVEN_STOP" if pos.get("break_even_active") else "STOP_LOSS")
                 leg = "TP2" if tp2_condition else ("BE_STOP" if pos.get("break_even_active") else "SL")
                 exit_side = "SELL" if is_long else "BUY"
@@ -1608,7 +2020,19 @@ class AutonomousMultiAssetTrader:
                         "degraded": True,
                         "synthetic": True,
                     }
-                self._apply_exit_leg(pos, leg, fill, exit_side)
+                try:
+                    self._apply_exit_leg(pos, leg, fill, exit_side)
+                except LedgerWriteError as e:
+                    # Ledger-first: the exit was NOT booked, so position
+                    # state is untouched. Release the close claim so the next
+                    # tick (or a manual close) can retry — never leave
+                    # _closing set, or the position becomes uncloseable.
+                    logger.error(f"[TRADER] Close of {symbol} aborted: {e}")
+                    with self.lock:
+                        p = self.open_positions.get(symbol)
+                        if p is not None:
+                            p.pop("_closing", None)
+                    continue
                 self.daily_trades_count += 1
 
                 # Final PnL = sum of ALL booked legs (TP1 + runner + funding).
@@ -1639,213 +2063,66 @@ class AutonomousMultiAssetTrader:
                     "mode": pos["mode"],
                     "duration_sec": int(duration)
                 }
-                self._record_closed_trade(trade_record)
+                if not self._record_closed_trade(trade_record):
+                    # The ledger already holds every leg of this close; the
+                    # history file is a secondary index. Loud, not silent —
+                    # counted in get_status() so the gap is visible.
+                    self.history_write_failures = getattr(self, "history_write_failures", 0) + 1
                 symbols_to_close.append((symbol, trade_record))
 
+        # Price-feed health for this tick: if positions exist but NO price
+        # could be obtained for any of them, risk is being evaluated on
+        # nothing. Count consecutive total-failure ticks for the run loop's
+        # degradation alert.
+        if self.open_positions and prices_ok == 0:
+            self._price_fetch_failures += 1
+        else:
+            self._price_fetch_failures = 0
+
         for sym, rec in symbols_to_close:
-            if sym in self.open_positions:
-                pos = self.open_positions[sym]
+            # The close was already claimed (and booked) above; this just
+            # removes it from the book. Lock-protected: a concurrent manual
+            # close can never have deleted it (it would have lost the claim),
+            # but stay defensive anyway.
+            with self.lock:
+                pos = self.open_positions.get(sym)
+                if pos is None:
+                    continue
                 del self.open_positions[sym]
 
-                # Enforce cooldown on Stop Loss: 45 min for 1 loss, 3 hours for 2+ consecutive losses
-                if rec["exit_reason"] == "STOP_LOSS":
-                    self.symbol_consecutive_losses[sym] = self.symbol_consecutive_losses.get(sym, 0) + 1
-                    cooldown_duration = 10800.0 if self.symbol_consecutive_losses[sym] >= 2 else 2700.0
-                    self.symbol_cooldowns[sym] = time.time() + cooldown_duration
-                    cooldown_min = int(cooldown_duration / 60)
-                    thought = f"[{time.strftime('%H:%M:%S UTC')}] 🛑 STOP LOSS on {sym} (${rec['pnl_usd']:+.2f}). {cooldown_min}m Cooldown Armed (Consecutive Losses: {self.symbol_consecutive_losses[sym]})."
-                    self._add_thought(thought)
-                elif rec["exit_reason"] in ("TP2_RUNNER_TARGET", "BREAK_EVEN_STOP"):
-                    self.symbol_consecutive_losses[sym] = 0
-
-                thought = f"[{time.strftime('%H:%M:%S UTC')}] 🏁 CLOSED {rec['side']} {sym} ({rec['exit_reason']}) | PnL: ${rec['pnl_usd']:+.2f} ({rec['pnl_pct']:+.1f}% on margin)"
+            # Enforce cooldown on Stop Loss: 45 min for 1 loss, 3 hours for 2+ consecutive losses
+            if rec["exit_reason"] == "STOP_LOSS":
+                self.symbol_consecutive_losses[sym] = self.symbol_consecutive_losses.get(sym, 0) + 1
+                cooldown_duration = 10800.0 if self.symbol_consecutive_losses[sym] >= 2 else 2700.0
+                self.symbol_cooldowns[sym] = time.time() + cooldown_duration
+                cooldown_min = int(cooldown_duration / 60)
+                thought = f"[{time.strftime('%H:%M:%S UTC')}] 🛑 STOP LOSS on {sym} (${rec['pnl_usd']:+.2f}). {cooldown_min}m Cooldown Armed (Consecutive Losses: {self.symbol_consecutive_losses[sym]})."
                 self._add_thought(thought)
-                print(f"[QUANT VAULT] 🏁 CLOSED {rec['side']} on {sym} ({rec['exit_reason']}) | PnL: ${rec['pnl_usd']:+.2f}")
+            elif rec["exit_reason"] in ("TP2_RUNNER_TARGET", "BREAK_EVEN_STOP"):
+                self.symbol_consecutive_losses[sym] = 0
 
-                # Record automated post-mortem in Episodic Memory Bank for continuous learning
-                try:
-                    self.episodic_memory.record_trade_post_mortem(
-                        trade_id=pos.get("id", f"trade_{int(now)}"),
-                        side=rec["side"],
-                        entry_price=rec["entry_price"],
-                        exit_price=rec["exit_price"],
-                        realized_pnl=rec["pnl_usd"],
-                        exit_reason=rec["exit_reason"],
-                        entry_metrics={
-                            "hurst": pos.get("hurst", 0.50),
-                            "robust_z": pos.get("robust_z", 0.0),
-                            "rvol": pos.get("rvol", 1.0),
-                            "setup": pos.get("setup", "SCALP"),
-                            "symbol": sym,
-                            "strategy_mode": "TREND_EXPANSION",
-                        },
-                        duration_sec=rec.get("duration_sec", 0),
-                        metrics_provenance="live",
-                    )
-                except Exception:
-                    pass
+            thought = f"[{time.strftime('%H:%M:%S UTC')}] 🏁 CLOSED {rec['side']} {sym} ({rec['exit_reason']}) | PnL: ${rec['pnl_usd']:+.2f} ({rec['pnl_pct']:+.1f}% on margin)"
+            self._add_thought(thought)
+            print(f"[QUANT VAULT] 🏁 CLOSED {rec['side']} on {sym} ({rec['exit_reason']}) | PnL: ${rec['pnl_usd']:+.2f}")
 
-                try:
-                    history = []
-                    if self.history_file.exists():
-                        try:
-                            history = json.loads(self.history_file.read_text(encoding="utf-8"))
-                        except Exception:
-                            pass
-                    wins = sum(1 for t in history if float(t.get("pnl_usd", 0)) > 0)
-                    losses = sum(1 for t in history if float(t.get("pnl_usd", 0)) < 0)
-                    gross_gain = sum(float(t.get("pnl_usd", 0)) for t in history if float(t.get("pnl_usd", 0)) > 0)
-                    gross_loss = sum(float(t.get("pnl_usd", 0)) for t in history if float(t.get("pnl_usd", 0)) < 0)
-
-                    self.telegram_bot.notify_trade_closed(
-                        symbol=sym,
-                        side=rec["side"],
-                        entry_price=rec["entry_price"],
-                        exit_price=rec["exit_price"],
-                        pnl_usd=rec["pnl_usd"],
-                        roe_pct=rec["pnl_pct"],
-                        exit_reason=rec["exit_reason"],
-                        duration_sec=rec.get("duration_sec", 0),
-                        fees_saved=0.45,
-                        daily_pnl=self.daily_pnl_usd,
-                        daily_trades=self.daily_trades_count,
-                        wins=wins,
-                        losses=losses,
-                        gross_gain=gross_gain,
-                        gross_loss=gross_loss,
-                        daily_target=self.daily_profit_target_usd,
-                        mode=rec["mode"]
-                    )
-                except Exception as _tc_err:
-                    print(f"[QUANT VAULT] Telegram close alert error: {_tc_err}")
-
-        if symbols_to_close:
-            self._save_positions()
-            self._save_state()
-
-        # Check daily profit goal reached ($2,500 target)
-        if self.daily_pnl_usd >= self.daily_profit_target_usd and not self.daily_goal_reached:
-            self.daily_goal_reached = True
-            self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] 🏆 DAILY TARGET REACHED! Banked ${self.daily_pnl_usd:,.2f} (+2.5% on $100K).")
-            print(f"[QUANT VAULT] 🏆 DAILY GOAL REACHED! Banked ${self.daily_pnl_usd:.2f} (> $2,500 target).")
-            try:
-                self.telegram_bot.notify_daily_goal(
-                    eur_amount=round(self.daily_pnl_usd / 1.10, 0),
-                    usd_amount=self.daily_pnl_usd,
-                    total_trades=self.daily_trades_count
-                )
-            except Exception:
-                pass
-
-    def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
-        with self.lock:
-            # A pending (unfilled) entry is also a commitment to the symbol:
-            # cancel it first so no position opens after the user asked out.
-            pending = self.pending_entries.pop(symbol, None)
-            if pending:
-                try:
-                    self.execution_adapter.fill_simulator.cancel_maker_order(pending["order_id"])
-                except Exception:
-                    pass
-                self._log_decision(symbol, "CANCELLED", "PENDING_ENTRY_CANCELLED", {
-                    "order_id": pending.get("order_id"),
-                    "reason": reason,
-                })
-                self._add_thought(
-                    f"[{time.strftime('%H:%M:%S UTC')}] ✋ {symbol} pending entry cancelled ({reason}). "
-                    f"No position was opened."
-                )
-            if symbol not in self.open_positions:
-                if pending:
-                    return {"success": True, "closed": symbol,
-                            "note": "Pending entry cancelled before any position opened."}
-                return {"success": False, "error": f"Position for {symbol} not found"}
-            pos = self.open_positions[symbol]
-            # Cancel any working TP1 order first: the position is being
-            # closed, so its scale-out order must not keep resting.
-            tp1_order_id = pos.pop("tp1_order_id", None)
-            if tp1_order_id:
-                try:
-                    self.execution_adapter.fill_simulator.cancel_maker_order(tp1_order_id)
-                except Exception:
-                    pass
-            cur_price = pos.get("current_price", pos["entry_price"])
-            try:
-                data = self._fetch_market_data(symbol)
-                if data and "price" in data:
-                    cur_price = float(data["price"])
-            except Exception:
-                pass
-
-            entry_px = pos.get("entry_avg_price", pos["entry_price"])
-            is_long = (pos["side"] == "LONG")
-            qty = float(pos.get("remaining_quantity", pos["quantity"]))
-            exit_side = "SELL" if is_long else "BUY"
-
-            # Manual closes are taker exits: cross the spread, pay taker fees.
-            fill = self.execution_adapter.fill_simulator.simulate_taker_fill(
-                symbol, exit_side, qty, reference_price=cur_price
-            )
-            if fill["status"] != "FILLED" or float(fill.get("filled_qty", 0.0)) <= 0:
-                fill = {
-                    "status": "FILLED",
-                    "filled_qty": qty,
-                    "avg_price": cur_price,
-                    "fee_usd": PaperFillSimulator.compute_fee(qty * cur_price, is_maker=False),
-                    "timestamp_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-                    "degraded": True,
-                    "synthetic": True,
-                }
-            self._apply_exit_leg(pos, "MANUAL", fill, exit_side)
-            self.daily_trades_count += 1
-            now = time.time()
-            duration = int(now - float(pos.get("open_time", now)))
-
-            final_pnl = round(float(pos.get("realized_pnl_usd", 0.0)), 2)
-            legs = pos.get("legs", [])
-            leg_qty = sum(float(l.get("qty", 0.0)) for l in legs)
-            avg_exit = (sum(float(l.get("qty", 0.0)) * float(l.get("price", 0.0)) for l in legs) / leg_qty) if leg_qty > 0 else cur_price
-            margin = float(pos.get("margin_collateral_usd", 0.0)) or 1.0
-
-            rec = {
-                "trade_id": pos.get("id"),
-                "symbol": symbol,
-                "side": pos["side"],
-                "entry_price": entry_px,
-                "exit_price": round(avg_exit, 6),
-                "pnl_usd": final_pnl,
-                "pnl_pct": round(final_pnl / margin * 100.0, 1),
-                "exit_reason": reason,
-                "fees_usd": round(float(pos.get("entry_fee_usd", 0.0)) + sum(float(l.get("fee_usd", 0.0)) for l in legs), 4),
-                "funding_usd": round(float(pos.get("funding_paid_usd", 0.0)), 4),
-                "legs": legs,
-                "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-                "mode": pos.get("mode", "PAPER"),
-                "duration_sec": duration
-            }
-            self._record_closed_trade(rec)
-            del self.open_positions[symbol]
-            self._save_positions()
-            self._save_state()
-            self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] ✋ MANUAL CLOSE: {rec['side']} {symbol} @ ${cur_price:,.2f} | PnL: ${rec['pnl_usd']:+.2f} ({rec['pnl_pct']:+.1f}%)")
-
+            # Record automated post-mortem in Episodic Memory Bank for continuous learning
             try:
                 self.episodic_memory.record_trade_post_mortem(
                     trade_id=pos.get("id", f"trade_{int(now)}"),
                     side=rec["side"],
-                    entry_price=entry_px,
+                    entry_price=rec["entry_price"],
                     exit_price=rec["exit_price"],
-                    realized_pnl=final_pnl,
-                    exit_reason=reason,
+                    realized_pnl=rec["pnl_usd"],
+                    exit_reason=rec["exit_reason"],
                     entry_metrics={
                         "hurst": pos.get("hurst", 0.50),
                         "robust_z": pos.get("robust_z", 0.0),
                         "rvol": pos.get("rvol", 1.0),
                         "setup": pos.get("setup", "SCALP"),
-                        "symbol": symbol,
+                        "symbol": sym,
                         "strategy_mode": "TREND_EXPANSION",
                     },
-                    duration_sec=duration,
+                    duration_sec=rec.get("duration_sec", 0),
                     metrics_provenance="live",
                 )
             except Exception:
@@ -1864,14 +2141,14 @@ class AutonomousMultiAssetTrader:
                 gross_loss = sum(float(t.get("pnl_usd", 0)) for t in history if float(t.get("pnl_usd", 0)) < 0)
 
                 self.telegram_bot.notify_trade_closed(
-                    symbol=symbol,
+                    symbol=sym,
                     side=rec["side"],
-                    entry_price=entry_px,
+                    entry_price=rec["entry_price"],
                     exit_price=rec["exit_price"],
                     pnl_usd=rec["pnl_usd"],
                     roe_pct=rec["pnl_pct"],
-                    exit_reason=reason,
-                    duration_sec=duration,
+                    exit_reason=rec["exit_reason"],
+                    duration_sec=rec.get("duration_sec", 0),
                     fees_saved=0.45,
                     daily_pnl=self.daily_pnl_usd,
                     daily_trades=self.daily_trades_count,
@@ -1880,44 +2157,275 @@ class AutonomousMultiAssetTrader:
                     gross_gain=gross_gain,
                     gross_loss=gross_loss,
                     daily_target=self.daily_profit_target_usd,
-                    mode=rec.get("mode", "PAPER")
+                    mode=rec["mode"]
                 )
             except Exception as _tc_err:
                 print(f"[QUANT VAULT] Telegram close alert error: {_tc_err}")
 
-            return {"success": True, "trade": rec}
+        if symbols_to_close:
+            self._save_positions()
+            self._save_state()
+
+        # Check daily profit goal reached
+        if self.daily_pnl_usd >= self.daily_profit_target_usd and not self.daily_goal_reached:
+            self.daily_goal_reached = True
+            self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] 🏆 DAILY TARGET REACHED! Banked ${self.daily_pnl_usd:,.2f} (+{self.daily_profit_target_usd/self.account_balance_usd*100:.1f}% on ${self.account_balance_usd:,.0f}).")
+            print(f"[QUANT VAULT] 🏆 DAILY GOAL REACHED! Banked ${self.daily_pnl_usd:.2f} (> ${self.daily_profit_target_usd:,.0f} target).")
+            try:
+                self.telegram_bot.notify_daily_goal(
+                    eur_amount=round(self.daily_pnl_usd / 1.10, 0),
+                    usd_amount=self.daily_pnl_usd,
+                    total_trades=self.daily_trades_count
+                )
+            except Exception:
+                pass
+
+    def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
+        # Claim the close atomically, then RELEASE the lock for the slow
+        # work below (market-data fetch, taker fill, Telegram). The old
+        # code held the lock for the entire body while the run loop took
+        # it nowhere — the lock serialized nothing and has now been fixed
+        # on both sides via _try_begin_close.
+        with self.lock:
+            # A pending (unfilled) entry is also a commitment to the symbol:
+            # cancel it first so no position opens after the user asked out.
+            pending = self.pending_entries.pop(symbol, None)
+            pos = self._try_begin_close(symbol)
+        if pending:
+            try:
+                self.execution_adapter.fill_simulator.cancel_maker_order(pending["order_id"])
+            except Exception:
+                pass
+            self._log_decision(symbol, "CANCELLED", "PENDING_ENTRY_CANCELLED", {
+                "order_id": pending.get("order_id"),
+                "reason": reason,
+            })
+            self._add_thought(
+                f"[{time.strftime('%H:%M:%S UTC')}] ✋ {symbol} pending entry cancelled ({reason}). "
+                f"No position was opened."
+            )
+            self._save_pending_entries()
+        if pos is None:
+            if pending:
+                return {"success": True, "closed": symbol,
+                        "note": "Pending entry cancelled before any position opened."}
+            return {"success": False,
+                    "error": f"Position for {symbol} not found or close already in progress"}
+        # Cancel any working TP1 order first: the position is being
+        # closed, so its scale-out order must not keep resting.
+        tp1_order_id = pos.pop("tp1_order_id", None)
+        if tp1_order_id:
+            try:
+                self.execution_adapter.fill_simulator.cancel_maker_order(tp1_order_id)
+            except Exception:
+                pass
+        cur_price = pos.get("current_price", pos["entry_price"])
+        try:
+            tick = self._get_price_tick(symbol)
+            if tick and "price" in tick:
+                cur_price = float(tick["price"])
+        except Exception:
+            pass
+
+        entry_px = pos.get("entry_avg_price", pos["entry_price"])
+        is_long = (pos["side"] == "LONG")
+        qty = float(pos.get("remaining_quantity", pos["quantity"]))
+        exit_side = "SELL" if is_long else "BUY"
+
+        # Manual closes are taker exits: cross the spread, pay taker fees.
+        fill = self.execution_adapter.fill_simulator.simulate_taker_fill(
+            symbol, exit_side, qty, reference_price=cur_price
+        )
+        if fill["status"] != "FILLED" or float(fill.get("filled_qty", 0.0)) <= 0:
+            fill = {
+                "status": "FILLED",
+                "filled_qty": qty,
+                "avg_price": cur_price,
+                "fee_usd": PaperFillSimulator.compute_fee(qty * cur_price, is_maker=False),
+                "timestamp_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+                "degraded": True,
+                "synthetic": True,
+            }
+        try:
+            self._apply_exit_leg(pos, "MANUAL", fill, exit_side)
+        except LedgerWriteError as e:
+            # Ledger-first: the exit was NOT booked, so position state is
+            # untouched. Release the close claim so the close can be
+            # retried — never leave _closing set, or the position becomes
+            # uncloseable.
+            logger.error(f"[TRADER] Manual close of {symbol} aborted: {e}")
+            with self.lock:
+                p = self.open_positions.get(symbol)
+                if p is not None:
+                    p.pop("_closing", None)
+            return {"success": False,
+                    "error": f"Ledger write failed; close NOT booked, position still open: {e}"}
+        self.daily_trades_count += 1
+        now = time.time()
+        duration = int(now - float(pos.get("open_time", now)))
+
+        final_pnl = round(float(pos.get("realized_pnl_usd", 0.0)), 2)
+        legs = pos.get("legs", [])
+        leg_qty = sum(float(l.get("qty", 0.0)) for l in legs)
+        avg_exit = (sum(float(l.get("qty", 0.0)) * float(l.get("price", 0.0)) for l in legs) / leg_qty) if leg_qty > 0 else cur_price
+        margin = float(pos.get("margin_collateral_usd", 0.0)) or 1.0
+
+        rec = {
+            "trade_id": pos.get("id"),
+            "symbol": symbol,
+            "side": pos["side"],
+            "entry_price": entry_px,
+            "exit_price": round(avg_exit, 6),
+            "pnl_usd": final_pnl,
+            "pnl_pct": round(final_pnl / margin * 100.0, 1),
+            "exit_reason": reason,
+            "fees_usd": round(float(pos.get("entry_fee_usd", 0.0)) + sum(float(l.get("fee_usd", 0.0)) for l in legs), 4),
+            "funding_usd": round(float(pos.get("funding_paid_usd", 0.0)), 4),
+            "legs": legs,
+            "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+            "mode": pos.get("mode", "PAPER"),
+            "duration_sec": duration
+        }
+        history_persisted = self._record_closed_trade(rec)
+        if not history_persisted:
+            # The ledger already holds every leg of this close; the history
+            # file is a secondary index. Loud, not silent — counted in
+            # get_status() so the gap is visible.
+            self.history_write_failures = getattr(self, "history_write_failures", 0) + 1
+        # We hold the _closing claim, so no one else can own this symbol —
+        # but take the lock for the removal itself anyway.
+        with self.lock:
+            self.open_positions.pop(symbol, None)
+        self._save_positions()
+        self._save_state()
+        self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] ✋ MANUAL CLOSE: {rec['side']} {symbol} @ ${cur_price:,.2f} | PnL: ${rec['pnl_usd']:+.2f} ({rec['pnl_pct']:+.1f}%)")
+
+        try:
+            self.episodic_memory.record_trade_post_mortem(
+                trade_id=pos.get("id", f"trade_{int(now)}"),
+                side=rec["side"],
+                entry_price=entry_px,
+                exit_price=rec["exit_price"],
+                realized_pnl=final_pnl,
+                exit_reason=reason,
+                entry_metrics={
+                    "hurst": pos.get("hurst", 0.50),
+                    "robust_z": pos.get("robust_z", 0.0),
+                    "rvol": pos.get("rvol", 1.0),
+                    "setup": pos.get("setup", "SCALP"),
+                    "symbol": symbol,
+                    "strategy_mode": "TREND_EXPANSION",
+                },
+                duration_sec=duration,
+                metrics_provenance="live",
+            )
+        except Exception:
+            pass
+
+        try:
+            history = []
+            if self.history_file.exists():
+                try:
+                    history = json.loads(self.history_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            wins = sum(1 for t in history if float(t.get("pnl_usd", 0)) > 0)
+            losses = sum(1 for t in history if float(t.get("pnl_usd", 0)) < 0)
+            gross_gain = sum(float(t.get("pnl_usd", 0)) for t in history if float(t.get("pnl_usd", 0)) > 0)
+            gross_loss = sum(float(t.get("pnl_usd", 0)) for t in history if float(t.get("pnl_usd", 0)) < 0)
+
+            self.telegram_bot.notify_trade_closed(
+                symbol=symbol,
+                side=rec["side"],
+                entry_price=entry_px,
+                exit_price=rec["exit_price"],
+                pnl_usd=rec["pnl_usd"],
+                roe_pct=rec["pnl_pct"],
+                exit_reason=reason,
+                duration_sec=duration,
+                fees_saved=0.45,
+                daily_pnl=self.daily_pnl_usd,
+                daily_trades=self.daily_trades_count,
+                wins=wins,
+                losses=losses,
+                gross_gain=gross_gain,
+                gross_loss=gross_loss,
+                daily_target=self.daily_profit_target_usd,
+                mode=rec.get("mode", "PAPER")
+            )
+        except Exception as _tc_err:
+            print(f"[QUANT VAULT] Telegram close alert error: {_tc_err}")
+
+        return {"success": True, "trade": rec, "history_persisted": history_persisted}
+
+    def _get_hunting_watchlist(self) -> List[str]:
+        """Symbols to scan for entries. Frozen by default (reproducible
+        experiment); set freeze_universe=False to let the universe scanner
+        rotate the watchlist from live scans."""
+        if self.freeze_universe:
+            return list(self._frozen_universe)
+        return self.universe_scanner.get_hunting_watchlist()
 
     def _run_loop(self):
         print("[QUANT VAULT] 24/7 Background loop actively hunting setups across Gold & Top 20...")
         scan_interval_counter = 0
+        reconcile_counter = 0
+        self._degraded_streak = 0
+        self._degraded_alert_sent = False
 
         while self.is_running:
             try:
+                # 0. Heartbeat + day rollover: the loop owns the daily
+                # counters, not the dashboard.
+                self._last_tick_ts = time.time()
+                self._maybe_rollover_day()
+
                 # 1. Manage active positions every 1 second
                 if self.open_positions:
                     self._manage_open_positions()
 
-                # 1b. Poll pending entry working orders every 1 second.
+                # 2. Strict Circuit Breaker: halt if the daily loss limit is
+                # hit. Checked BEFORE pending-entry polling: resting entry
+                # orders are commitments too, and must not fill after the
+                # halt. On trip, cancel all pending entries as well.
+                if self.daily_pnl_usd <= -self.daily_loss_limit_usd:
+                    self._trip_circuit_breaker()
+                    time.sleep(2)
+                    continue
+
+                # 2b. Poll pending entry working orders every 1 second.
                 # Positions are created ONLY on real post-placement fills.
                 if self.pending_entries:
                     self._poll_pending_entries()
 
-                # 2. Strict Circuit Breaker: Halt if -$3,000 daily loss hit
-                if self.daily_pnl_usd <= -self.daily_loss_limit_usd:
-                    if not self.circuit_breaker_triggered:
-                        self.circuit_breaker_triggered = True
-                        thought = f"[{time.strftime('%H:%M:%S UTC')}] 🛡️ CIRCUIT BREAKER TRIGGERED (-$3,000/day). Entries paused to protect bankroll."
-                        self._add_thought(thought)
-                        print("[QUANT VAULT] 🛡️ CIRCUIT BREAKER TRIGGERED (-$3,000/day). Halting entries.")
-                        try:
-                            self.telegram_bot.notify_circuit_breaker(
-                                loss_amount=self.daily_pnl_usd,
-                                limit=self.daily_loss_limit_usd
-                            )
-                        except Exception:
-                            pass
-                    time.sleep(2)
-                    continue
+                # 2c. Price-feed health: sustained total data failure means
+                # stops are being evaluated on stale/absent data. Alert once.
+                if getattr(self, "_price_fetch_failures", 0) >= 300 and not self._degraded_alert_sent:
+                    self._degraded_alert_sent = True
+                    try:
+                        self.telegram_bot.send_message(
+                            "🚨 <b>DATA DEGRADED</b>: price feed has failed 300+ consecutive ticks. "
+                            "Stops may be evaluated on stale data. Investigate connectivity."
+                        )
+                    except Exception:
+                        pass
+                elif getattr(self, "_price_fetch_failures", 0) == 0:
+                    self._degraded_alert_sent = False
+
+                # 2d. Periodic in-run reconcile: the ledger is the source of
+                # truth; if in-memory daily PnL ever drifts, heal it and say so.
+                reconcile_counter += 1
+                if reconcile_counter >= 300:
+                    reconcile_counter = 0
+                    try:
+                        before = round(self.daily_pnl_usd, 2)
+                        self._reconcile_daily_pnl()
+                        if abs(self.daily_pnl_usd - before) > 0.01:
+                            self._add_thought(
+                                f"[{time.strftime('%H:%M:%S UTC')}] 🧾 In-run reconcile healed daily PnL "
+                                f"${before:+.2f} -> ${self.daily_pnl_usd:+.2f} from the ledger.")
+                    except Exception:
+                        pass
 
                 # 3. Sniper Hunting: Scan dynamic watchlist every 10 seconds
                 scan_interval_counter += 1
@@ -1926,8 +2434,9 @@ class AutonomousMultiAssetTrader:
 
                     # Check daily margin cap ($15,000 max active margin: 15 positions * $1,000 margin)
                     current_margin = sum(float(p.get("margin_collateral_usd", 1000.0)) for p in self.open_positions.values())
-                    if (current_margin + 1000.0) <= self.max_daily_allocation_usd and len(self.open_positions) < self.max_concurrent_positions:
-                        watchlist = self.universe_scanner.get_hunting_watchlist()
+                    committed = len(self.open_positions) + len(self.pending_entries)
+                    if (current_margin + 1000.0) <= self.max_daily_allocation_usd and committed < self.max_concurrent_positions:
+                        watchlist = self._get_hunting_watchlist()
 
                         for symbol in watchlist:
                             if symbol in self.open_positions:
@@ -1949,7 +2458,7 @@ class AutonomousMultiAssetTrader:
                             signal = self._evaluate_signal(symbol, data)
                             if signal:
                                 self._open_position(signal)
-                                if len(self.open_positions) >= self.max_concurrent_positions:
+                                if len(self.open_positions) + len(self.pending_entries) >= self.max_concurrent_positions:
                                     break
 
             except Exception as e:
@@ -1958,6 +2467,43 @@ class AutonomousMultiAssetTrader:
             time.sleep(1)
 
         print("[QUANT VAULT] Loop paused.")
+
+    def _trip_circuit_breaker(self):
+        """Latch the circuit breaker: halt entries AND cancel every resting
+        entry working order. A halted system must not keep commitments that
+        can fill after the halt."""
+        if self.circuit_breaker_triggered:
+            return
+        self.circuit_breaker_triggered = True
+        thought = (f"[{time.strftime('%H:%M:%S UTC')}] 🛡️ CIRCUIT BREAKER TRIGGERED "
+                   f"(-${self.daily_loss_limit_usd:,.0f}/day). Entries paused to protect bankroll.")
+        self._add_thought(thought)
+        print(f"[QUANT VAULT] 🛡️ CIRCUIT BREAKER TRIGGERED (-${self.daily_loss_limit_usd:,.0f}/day). Halting entries.")
+        self._cancel_all_pending_entries("CIRCUIT_BREAKER")
+        try:
+            self.telegram_bot.notify_circuit_breaker(
+                loss_amount=self.daily_pnl_usd,
+                limit=self.daily_loss_limit_usd
+            )
+        except Exception:
+            pass
+
+    def _cancel_all_pending_entries(self, reason: str):
+        """Cancel every resting entry working order (breaker trips, etc.).
+        Never leaves a commitment the operator believes is halted."""
+        for symbol in list(self.pending_entries.keys()):
+            pending = self.pending_entries.pop(symbol, None)
+            if not pending:
+                continue
+            try:
+                self.execution_adapter.fill_simulator.cancel_maker_order(pending["order_id"])
+            except Exception:
+                pass
+            self._log_decision(symbol, "CANCELLED", "PENDING_ENTRY_CANCELLED", {
+                "order_id": pending.get("order_id"),
+                "reason": reason,
+            })
+        self._save_pending_entries()
 
 
 if __name__ == "__main__":

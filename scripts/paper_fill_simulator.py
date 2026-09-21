@@ -62,6 +62,12 @@ def _http_get_json(url: str, timeout: float = 6.0) -> Optional[Any]:
 
 
 class PaperFillSimulator:
+    # Terminal working orders (FILLED/EXPIRED/CANCELLED) are retained this
+    # long for post-terminal polls, then pruned to bound memory on 24/7
+    # runs. The trader polls every second and consumes terminal states
+    # immediately, so an hour is ample.
+    TERMINAL_ORDER_RETENTION_SEC = 3600
+
     def __init__(
         self,
         cache_dir: str = "runtime",
@@ -244,6 +250,14 @@ class PaperFillSimulator:
             "status": "WORKING",
             "reason": None,
         }
+        # Bound memory on 24/7 runs: prune terminal orders older than the
+        # retention window. Pruning on placement (not on poll) guarantees a
+        # terminal state stays pollable through its retention period.
+        cutoff_ms = now_ms - self.TERMINAL_ORDER_RETENTION_SEC * 1000
+        for oid in [oid for oid, o in self._working_orders.items()
+                    if o["status"] in ("FILLED", "EXPIRED", "CANCELLED")
+                    and o.get("terminal_ts_ms", 0) < cutoff_ms]:
+            del self._working_orders[oid]
         return {
             "status": "WORKING", "order_id": order_id, "symbol": symbol, "side": side,
             "limit_price": limit_price, "requested_qty": quantity,
@@ -322,8 +336,10 @@ class PaperFillSimulator:
             order["remaining_qty"] = 0.0
             order["filled_qty"] = order["quantity"]
             order["status"] = "FILLED"
+            order["terminal_ts_ms"] = now_ms
         elif now_ms - order["placed_ts_ms"] >= order["max_wait_sec"] * 1000:
             order["status"] = "EXPIRED"
+            order["terminal_ts_ms"] = now_ms
             order["reason"] = (f"no_fill_within_{order['max_wait_sec']}s: "
                                "no post-placement trade-through with volume")
         elif new_fill > 0:
@@ -335,12 +351,14 @@ class PaperFillSimulator:
 
     def cancel_maker_order(self, order_id: str) -> Dict[str, Any]:
         now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        now_ms = int(time.time() * 1000)
         order = self._working_orders.get(order_id)
         if order is None:
             return {"status": "UNKNOWN", "order_id": order_id,
                     "reason": "unknown_order_id", "timestamp_utc": now_utc}
         if order["status"] == "WORKING" or order["status"] == "PARTIAL":
             order["status"] = "CANCELLED"
+            order["terminal_ts_ms"] = now_ms
             order["reason"] = "cancelled_by_caller"
         return self._order_snapshot(order, 0.0, 0.0, now_utc)
 
@@ -437,30 +455,47 @@ class PaperFillSimulator:
         }
 
     # ------------------------------------------------------------------
-    # Honest break-even: exit must cover entry fee + exit fee + funding.
+    # Honest break-even: the runner exit must make the TOTAL trade net >= 0.
     # ------------------------------------------------------------------
     @staticmethod
     def fee_protected_break_even(
         entry_avg_price: float,
         quantity: float,
         is_long: bool,
-        entry_fee_usd: float,
-        funding_paid_usd: float = 0.0,
+        sunk_cost_usd: float,
+        taker_slippage_bps: float = 2.5,
     ) -> float:
-        """Break-even stop where a taker exit nets >= 0 after all costs.
+        """Total-trade break-even stop for the remaining quantity.
 
-        LONG exits by selling:  P*qty*(1 - taker_fee) - entry_avg*qty - entry_fee - funding >= 0
-        SHORT exits by buying:  entry_avg*qty - P*qty*(1 + taker_fee) - entry_fee - funding >= 0
+        sunk_cost_usd is the net amount the runner exit must recover for the
+        WHOLE trade (all banked legs + entry fee + funding + this exit) to
+        net >= 0. The trader passes -(realized_pnl_usd booked so far):
+          - before any scale-out: realized = -entry_fee - funding, so
+            sunk = entry_fee + funding (the classic break-even);
+          - after a banked TP1: realized = banked - entry_fee - funding, so
+            sunk = entry_fee + funding - banked, which can go NEGATIVE —
+            the honest "risk-free" level then sits BELOW entry for a long
+            (the banked profit already paid the costs).
+
+        taker_slippage_bps is a conservative allowance for the taker exit's
+        half-spread + impact (the old formula covered the taker fee but not
+        slippage, so "nets >= 0" was optimistic by ~2.5bps on BTC).
+
+        LONG exits by selling:
+            P*qty*(1 - taker_fee - slip) - entry_avg*qty >= sunk
+        SHORT exits by buying:
+            entry_avg*qty - P*qty*(1 + taker_fee + slip) >= sunk
         """
         qty = max(quantity, 1e-12)
+        slip = max(taker_slippage_bps, 0.0) / 10000.0
         if is_long:
-            total_cost = entry_avg_price * qty + entry_fee_usd + funding_paid_usd
-            be = total_cost / (qty * (1.0 - TAKER_FEE_RATE))
+            denom = qty * (1.0 - TAKER_FEE_RATE - slip)
+            be = (entry_avg_price * qty + sunk_cost_usd) / denom if denom > 0 else entry_avg_price
             # Round UP: the stop must guarantee net >= 0, never below it.
             be = math.ceil(be * 1e8) / 1e8
         else:
-            net_proceeds = entry_avg_price * qty - entry_fee_usd - funding_paid_usd
-            be = net_proceeds / (qty * (1.0 + TAKER_FEE_RATE))
+            denom = qty * (1.0 + TAKER_FEE_RATE + slip)
+            be = (entry_avg_price * qty - sunk_cost_usd) / denom if denom > 0 else entry_avg_price
             # Round DOWN: for a short, a lower exit price is the safe direction.
             be = math.floor(be * 1e8) / 1e8
         return be

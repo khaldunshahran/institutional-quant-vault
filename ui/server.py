@@ -755,12 +755,9 @@ def update_telemetry():
         except Exception:
             pass
 
-    if btc_spot is not None:
-        try:
-            current_c = compute_current_long_short_call()
-            DIRECTIONAL_MANAGER.on_price_tick(btc_spot, current_c)
-        except Exception:
-            pass
+    # NOTE (Batch 4): the legacy DirectionalTradeManager background driver
+    # was removed here. Its endpoints are disabled and it must not
+    # open/manage/close positions outside the unified ledger.
 
     if impulse is None and (btc_spot is not None and btc_open is not None):
         impulse = btc_spot - btc_open
@@ -1112,7 +1109,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/jev/long-short":
             self.send_json(self.handle_get_jev_long_short())
         elif path == "/api/jev/directional/position":
-            self.send_json(self.handle_get_directional_position())
+            self.send_json(self._directional_disabled())
         elif path == "/api/jev/klines":
             self.send_json(self.handle_get_jev_klines(parsed.query))
         elif path == "/api/backtest":
@@ -1151,15 +1148,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/autotrade/close":
             sym = payload.get("symbol")
             if GLOBAL_AUTONOMOUS_TRADER and sym:
-                if hasattr(GLOBAL_AUTONOMOUS_TRADER, "close_position"):
-                    res = GLOBAL_AUTONOMOUS_TRADER.close_position(sym, reason="MANUAL_CLOSE")
-                    self.send_json(res)
-                elif sym in GLOBAL_AUTONOMOUS_TRADER.open_positions:
-                    del GLOBAL_AUTONOMOUS_TRADER.open_positions[sym]
-                    GLOBAL_AUTONOMOUS_TRADER._save_positions()
-                    self.send_json({"success": True, "closed": sym})
-                else:
-                    self.send_json({"success": False, "error": "Position not found"})
+                # The ONLY close path: ledger-aware taker close. (The old
+                # direct `del open_positions[sym]` fallback silently skipped
+                # fees/slippage/ledger and corrupted the books; removed.)
+                res = GLOBAL_AUTONOMOUS_TRADER.close_position(sym, reason="MANUAL_CLOSE")
+                self.send_json(res)
             else:
                 self.send_json({"success": False, "error": "Invalid request"})
         elif path == "/api/binance/mode":
@@ -1207,13 +1200,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 res = {"success": False, "error": "Bot uninitialized"}
             self.send_json(res)
         elif path == "/api/jev/directional/open":
-            self.send_json(self.handle_directional_open(payload))
+            self.send_json(self._directional_disabled())
         elif path == "/api/jev/directional/close":
-            self.send_json(self.handle_directional_close(payload))
+            self.send_json(self._directional_disabled())
         elif path == "/api/jev/directional/config":
-            self.send_json(self.handle_directional_config(payload))
+            self.send_json(self._directional_disabled())
         elif path == "/api/jev/directional/reset":
-            self.send_json(self.handle_directional_reset())
+            self.send_json(self._directional_disabled())
         elif path == "/api/bot/start":
             self.send_json(self.handle_bot_start(payload))
         elif path == "/api/bot/stop":
@@ -1377,6 +1370,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             'recent_history': LAST_LONG_SHORT_CALLS,
             'server_time': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
         }
+
+    def _directional_disabled(self):
+        """The legacy DirectionalTradeManager ran a PARALLEL paper-trading
+        book (own balance, own fees, own fills, own files) that could overlap
+        BTC with the autonomous trader while bypassing the unified ledger,
+        the fill simulator, and every Batch 3/4 integrity fix. It is fenced
+        off for the experiment: all paper trading goes through the
+        autonomous trader's ledger-aware path."""
+        return {"success": False, "error": "disabled",
+                "message": "The legacy directional paper-trading book is disabled. "
+                           "All paper trading runs through the autonomous trader "
+                           "(/api/autotrade/*) with unified ledger accounting."}
 
     def handle_get_directional_position(self):
         global DIRECTIONAL_MANAGER

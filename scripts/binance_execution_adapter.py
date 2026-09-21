@@ -1,17 +1,15 @@
 """
-Unified Binance Execution Adapter
-Supports seamless dual-mode execution:
-1. PAPER MODE: Zero-risk simulated execution with realistic 0.015% Maker rate and local ledger persistence.
-2. LIVE MODE: Official Binance Futures/Spot execution via HMAC-SHA256 signed API requests.
+Paper-only Binance execution adapter.
+
+Live trading is PERMANENTLY DISABLED in this build. There is no
+confirmation flag, no environment variable, and no credential combination
+that enables live orders: the adapter refuses mode="live" unconditionally
+at construction, at set_mode(), and at the order-execution boundary.
+The paper fill simulator is the only execution path.
 """
 
-import os
 import time
-import hmac
-import hashlib
 import json
-import urllib.request
-import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -21,44 +19,29 @@ except ImportError:  # pragma: no cover - direct script execution
     from paper_fill_simulator import PaperFillSimulator
 
 class BinanceExecutionAdapter:
-    # Explicit opt-in for live trading. Live mode is REFUSED unless this
-    # exact value is set — merely having API keys in .env is not enough.
-    # The experiment NEVER runs live; this is a hard guardrail.
-    LIVE_CONFIRMATION_VALUE = "I_UNDERSTAND_THE_RISK"
-
-    @staticmethod
-    def live_trading_allowed() -> bool:
-        """True only when the user has explicitly confirmed live trading AND
-        API credentials are present. Everything else -> paper only."""
-        confirmed = (os.getenv("QUANT_VAULT_ENABLE_LIVE_TRADING", "").strip()
-                     == BinanceExecutionAdapter.LIVE_CONFIRMATION_VALUE)
-        key = os.getenv("BINANCE_API_KEY", "").strip()
-        secret = os.getenv("BINANCE_API_SECRET", "").strip()
-        return confirmed and len(key) > 10 and len(secret) > 10
+    # Live trading is permanently disabled: no confirmation value exists,
+    # on purpose. Any code path that requests live execution is refused.
 
     def __init__(self, mode: str = "paper", ledger_path: str = "runtime/binance_orders.json"):
         requested = mode.lower()
-        if requested == "live" and not BinanceExecutionAdapter.live_trading_allowed():
+        if requested == "live":
             raise RuntimeError(
-                "LIVE mode REFUSED: set QUANT_VAULT_ENABLE_LIVE_TRADING="
-                f"'{BinanceExecutionAdapter.LIVE_CONFIRMATION_VALUE}' in the environment "
-                "AND provide BINANCE_API_KEY / BINANCE_API_SECRET. "
-                "Refusing to construct a live adapter — paper mode stays active."
+                "LIVE mode is PERMANENTLY DISABLED in this build: this system "
+                "runs paper trading only. No confirmation flag, environment "
+                "variable, or API credential can enable live orders. Refusing "
+                "to construct a live adapter — paper mode stays active."
             )
-        self.mode = requested # "paper" or "live"
+        if requested != "paper":
+            raise RuntimeError(
+                f"Unknown execution mode {mode!r}: this build supports 'paper' only."
+            )
+        self.mode = "paper"
         self.ledger_path = Path(ledger_path)
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Paper fill simulator: the single execution model for paper mode.
-        # (Live mode still sends real GTX post-only orders to Binance.)
+        # Paper fill simulator: the single execution model. There is no
+        # live order path in this build.
         self.fill_simulator = PaperFillSimulator(cache_dir=str(self.ledger_path.parent))
-        
-        # Load API keys from environment or .env
-        self.api_key = os.getenv("BINANCE_API_KEY", "").strip()
-        self.api_secret = os.getenv("BINANCE_API_SECRET", "").strip()
-        
-        # Base URLs for Binance Futures
-        self.futures_base_url = "https://fapi.binance.com"
         
         # Initialize ledger if not exists
         if not self.ledger_path.exists():
@@ -83,44 +66,35 @@ class BinanceExecutionAdapter:
             pass
         return {"mode": self.mode, "starting_balance": 1000.0, "current_balance": 1000.0, "orders": []}
 
-    def has_live_credentials(self) -> bool:
-        return bool(self.api_key and self.api_secret and len(self.api_key) > 10 and len(self.api_secret) > 10)
-
     def get_status(self) -> Dict[str, Any]:
         ledger = self._read_ledger()
         return {
             "mode": self.mode.upper(),
-            "is_live": self.mode == "live",
-            "has_credentials": self.has_live_credentials(),
+            "is_live": False,  # live trading is permanently disabled
             "paper_balance_usd": ledger.get("current_balance", 1000.0),
-            "total_orders": len(ledger.get("orders", []))
+            "total_orders": len(ledger.get("orders", [])),
         }
 
     def set_mode(self, mode: str) -> Dict[str, Any]:
         target = mode.lower()
-        if target == "live" and not BinanceExecutionAdapter.live_trading_allowed():
+        if target == "live":
             return {
                 "success": False,
-                "error": ("Cannot switch to LIVE: set QUANT_VAULT_ENABLE_LIVE_TRADING="
-                          f"'{BinanceExecutionAdapter.LIVE_CONFIRMATION_VALUE}' in the environment "
-                          "and provide BINANCE_API_KEY / BINANCE_API_SECRET. "
-                          "Paper mode stays active — no live orders can be sent.")
+                "error": ("LIVE trading is PERMANENTLY DISABLED in this build "
+                          "(paper trading only). No confirmation flag, environment "
+                          "variable, or API credential can enable it. Paper mode "
+                          "stays active — no live orders can be sent."),
             }
-        self.mode = target
+        if target != "paper":
+            return {
+                "success": False,
+                "error": f"Unknown mode {mode!r}: this build supports 'paper' only.",
+            }
+        self.mode = "paper"
         ledger = self._read_ledger()
         ledger["mode"] = self.mode
         self._save_ledger(ledger)
         return {"success": True, "mode": self.mode.upper()}
-
-    def _sign_query(self, params: Dict[str, Any]) -> str:
-        """Create HMAC-SHA256 signature for Binance Private REST API."""
-        query_string = urllib.parse.urlencode(params)
-        signature = hmac.new(
-            self.api_secret.encode("utf-8"),
-            query_string.encode("utf-8"),
-            hashlib.sha256
-        ).hexdigest()
-        return f"{query_string}&signature={signature}"
 
     def execute_order(
         self,
@@ -231,60 +205,16 @@ class BinanceExecutionAdapter:
             self._save_ledger(ledger)
             return {"success": True, "order": fill_result}
 
-        # 2. LIVE BINANCE EXECUTION
-        if not self.has_live_credentials():
-            return {
-                "success": False,
-                "error": "Live credentials missing in .env"
-            }
-
-        url = f"{self.futures_base_url}/fapi/v1/order"
-        params = {
-            "symbol": symbol,
-            "side": side,
-            "type": "LIMIT",
-            "timeInForce": "GTX", # Post-Only for pure Maker fees
-            "quantity": quantity,
-            "price": price,
-            "newClientOrderId": order_id,
-            "timestamp": int(now * 1000)
+        # 2. LIVE EXECUTION — PERMANENTLY DISABLED.
+        # mode can never be "live" (construction and set_mode() refuse it),
+        # but if a live mode were ever smuggled onto this instance by hand,
+        # the order boundary still refuses instead of signing a real
+        # request. There is no live order code left in this build.
+        return {
+            "success": False,
+            "error": ("LIVE trading is PERMANENTLY DISABLED in this build "
+                      "(paper trading only). No order was sent."),
         }
-
-        signed_query = self._sign_query(params)
-        req_url = f"{url}?{signed_query}"
-
-        try:
-            req = urllib.request.Request(
-                req_url,
-                method="POST",
-                headers={
-                    "X-MBX-APIKEY": self.api_key,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "User-Agent": "TypeSafe-Jev-Quant/2.0"
-                }
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode())
-                live_result = {
-                    "order_id": str(data.get("orderId", order_id)),
-                    "client_order_id": data.get("clientOrderId", order_id),
-                    "symbol": symbol,
-                    "side": side,
-                    "status": data.get("status", "NEW"),
-                    "price": float(data.get("price", price)),
-                    "quantity": float(data.get("origQty", quantity)),
-                    "notional_usd": round(quantity * price, 2),
-                    "fee_rate": "0.015% (Maker GTX)",
-                    "execution_mode": "LIVE_BINANCE",
-                    "timestamp": now,
-                    "raw_response": data
-                }
-                return {"success": True, "order": live_result}
-        except urllib.error.HTTPError as e:
-            err_text = e.read().decode()
-            return {"success": False, "error": f"Binance HTTP {e.code}: {err_text}"}
-        except Exception as e:
-            return {"success": False, "error": f"Network error: {str(e)}"}
 
 if __name__ == "__main__":
     adapter = BinanceExecutionAdapter(mode="paper")

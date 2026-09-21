@@ -57,6 +57,7 @@ def ledger_trader(tmp_path):
     trader.episodic_memory = MagicMock()
     trader.open_positions = {}
     trader.execution_adapter.fill_simulator = StubFillSimulator()
+    trader.PRICE_CACHE_TTL_SEC = 0  # tests drive ticks manually; never serve a cached price
     return trader
 
 
@@ -202,7 +203,12 @@ def test_tp1_partial_fill_does_not_lock_free_trade(ledger_trader):
     trader._manage_open_positions()  # poll 2 -> FILLED (rest)
     pos = trader.open_positions["BTCUSDT"]
     assert pos["tp1_hit"] is True
-    assert pos["stop_loss"] > 100.0, "stop moves to fee-protected BE only on completion"
+    # Honest total-trade break-even: the banked TP1 profit already covered
+    # the entry fee, so the risk-free level sits BELOW entry. The old
+    # profit-lock put it above entry, amputating the runner on any
+    # normal pullback.
+    assert pos["stop_loss"] == pytest.approx(trader._fee_protected_be(pos))
+    assert pos["stop_loss"] < 100.0
 
     # Both partial chunks banked as TP1 legs. Each chunk rounds to cents
     # independently (real chunked-fill behavior), so expect per-chunk math.
@@ -239,17 +245,40 @@ def test_stop_loss_pays_taker_fee_and_slippage_free_but_costed(ledger_trader):
 
 def test_break_even_exit_nets_non_negative(ledger_trader):
     """After the early-BE ratchet, a stop-out at the BE level must not lose
-    money once entry fee + taker exit fee + funding are accounted for."""
+    money once entry fee + taker exit fee + funding are accounted for.
+
+    The TP1 working order stays unfilled on the pullback (price never
+    returns to the TP1 limit, so a real maker order would still be
+    resting) — this exercises the pre-TP1 early-BE path, not the post-TP1
+    honest-BE path.
+    """
     trader = ledger_trader
     open_and_fill(trader, make_signal())
 
-    # Push to +1.1 ATR to arm the honest break-even
+    # Push to +1.1 ATR to arm the honest break-even (also places the TP1
+    # working order).
     trader._fetch_market_data = lambda s: {"price": 102.20, "closes": [102.20] * 20}
     trader._manage_open_positions()
     pos = trader.open_positions["BTCUSDT"]
     assert pos["break_even_active"] is True
     be_stop = pos["stop_loss"]
     assert be_stop > 100.0
+
+    # Keep the TP1 order WORKING through the pullback: no fills, so the
+    # early-BE stop is what gets tested.
+    sim = trader.execution_adapter.fill_simulator
+
+    def working_poll(order_id):
+        o = sim._orders[order_id]
+        return {"status": "WORKING", "order_id": order_id, "symbol": o["symbol"],
+                "side": o["side"], "limit_price": o["limit_price"],
+                "requested_qty": o["quantity"], "filled_qty": 0.0,
+                "remaining_qty": o["quantity"], "new_filled_qty": 0.0,
+                "new_fee_usd": 0.0, "avg_price": o["limit_price"],
+                "is_maker": True, "reason": None,
+                "timestamp_utc": "2026-09-21 00:00:00 UTC"}
+
+    sim.poll_maker_order = working_poll
 
     # Price falls back exactly to the BE stop -> taker exit at ~BE
     trader._fetch_market_data = lambda s: {"price": be_stop - 0.01, "closes": [be_stop - 0.01] * 20}
@@ -286,18 +315,30 @@ def test_funding_accrues_once_per_window(ledger_trader):
     assert funding_events[0]["realized_pnl_usd"] == -charged
 
 
-def test_funding_young_position_stamped_not_skipped(ledger_trader):
-    """A position younger than 5 minutes is stamped 'not due' for the window
-    — marked processed but never charged — so the window can't be skipped."""
+def test_funding_young_position_not_stamped_charges_later(ledger_trader):
+    """A position younger than 5 minutes is NOT charged and NOT stamped:
+    it retries next tick and still pays for the current window once old
+    enough. Stamping-without-charging was the bug that silently skipped
+    the first funding window."""
     trader = ledger_trader
     open_and_fill(trader, make_signal())
     pos = trader.open_positions["BTCUSDT"]
     assert time.time() - pos["open_time"] < 300
 
     assert trader._accrue_funding(pos, 10_000.0) == 0.0
-    assert pos.get("last_funding_window") is not None, "window must be stamped"
+    assert pos.get("last_funding_window") is None, "young position must NOT be stamped"
     events = ledger_events(trader)
     assert not [e for e in events if e["leg"] == "FUNDING"], "no funding booked for young position"
+
+    # Same window, now older than 5 minutes -> charged exactly once.
+    pos["open_time"] = time.time() - 600
+    charged = trader._accrue_funding(pos, 10_000.0)
+    assert charged == round(10_000.0 * 0.0001, 4)
+    assert pos.get("last_funding_window") is not None
+    # And not again for the same window.
+    assert trader._accrue_funding(pos, 10_000.0) == 0.0
+    funding_events = [e for e in ledger_events(trader) if e["leg"] == "FUNDING"]
+    assert len(funding_events) == 1
 
 
 def test_manual_close_routes_through_taker_fill(ledger_trader):

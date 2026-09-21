@@ -188,19 +188,36 @@ def test_maker_rejects_when_filters_unavailable():
 
 
 def test_fee_protected_break_even_long():
-    # entry 100, qty 1, entry fee $0.015, funding $0.01 -> BE must exceed 100
-    be = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, True, 0.015, 0.01)
+    # entry 100, qty 1, sunk cost $0.025 (entry fee + funding) -> BE must exceed 100
+    be = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, True, 0.025)
     assert be > 100.0, be
-    # exiting at BE nets >= 0 after taker fee
-    net = be * 1.0 * (1 - TAKER_FEE_RATE) - 100.0 * 1.0 - 0.015 - 0.01
+    # exiting at BE nets >= 0 after taker fee AND the slippage allowance
+    net = be * 1.0 * (1 - TAKER_FEE_RATE - 2.5 / 10000.0) - 100.0 * 1.0 - 0.025
     assert net >= -1e-9, net
 
 
 def test_fee_protected_break_even_short():
-    be = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, False, 0.015, 0.01)
+    be = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, False, 0.025)
     assert be < 100.0, be
-    net = 100.0 * 1.0 - be * 1.0 * (1 + TAKER_FEE_RATE) - 0.015 - 0.01
+    net = 100.0 * 1.0 - be * 1.0 * (1 + TAKER_FEE_RATE + 2.5 / 10000.0) - 0.025
     assert net >= -1e-9, net
+
+
+def test_fee_protected_break_even_banked_profit_lowers_stop():
+    # TP1 banked $5.00 while entry fee + funding cost $0.025:
+    # sunk = 0.025 - 5.00 = -4.975 -> the honest total-trade break-even
+    # sits BELOW entry for a long (banked profit already paid the costs).
+    be = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, True, -4.975)
+    assert be < 100.0, be
+    net = be * 1.0 * (1 - TAKER_FEE_RATE - 2.5 / 10000.0) - 100.0 * 1.0 + 4.975
+    assert net >= -1e-9, net
+
+
+def test_fee_protected_break_even_slippage_allowance():
+    # A larger slippage allowance pushes the long BE further above entry.
+    be_small = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, True, 0.025, taker_slippage_bps=0.0)
+    be_big = PaperFillSimulator.fee_protected_break_even(100.0, 1.0, True, 0.025, taker_slippage_bps=10.0)
+    assert be_big > be_small > 100.0
 
 
 def test_funding_flat_rate():

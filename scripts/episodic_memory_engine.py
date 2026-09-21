@@ -134,7 +134,11 @@ class EpisodicMemoryEngine:
         predictive features.
         """
         # Quarantine: never learn from backfilled / fabricated metrics.
-        live_memories = [m for m in self.memories if m.get("metrics_provenance", "live") == "live"]
+        # FAIL-CLOSED: a record participates ONLY with an explicit
+        # metrics_provenance == "live". Records with a missing provenance
+        # field are excluded — the old .get(..., "live") default failed
+        # open and let 52 provenance-less records through.
+        live_memories = [m for m in self.memories if m.get("metrics_provenance") == "live"]
         if not live_memories:
             return {
                 "has_memory": False,

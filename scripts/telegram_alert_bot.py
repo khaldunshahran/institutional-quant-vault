@@ -583,7 +583,21 @@ class TelegramAlertBot:
         if cmd == "/closeall":
             if self.action_handler:
                 res = self.action_handler("closeall", {})
-                self.send_message("🚨 <b>Emergency Close Executed</b>\nAll open positions closed.", reply_to_id=reply_to_id, force=True)
+                # Report the ACTUAL outcome: the old code announced success
+                # even when every close failed.
+                if res.get("success"):
+                    ok = int(res.get("closed_count", 0))
+                    failed = [r for r in res.get("results", []) if not r.get("success")]
+                    if failed:
+                        fails = ", ".join(f"{r['symbol']}: {r.get('error', '?')}" for r in failed)
+                        self.send_message(f"🚨 <b>Emergency Close Partial</b>\nClosed {ok}; FAILED: {fails}",
+                                            reply_to_id=reply_to_id, force=True)
+                    else:
+                        self.send_message(f"🚨 <b>Emergency Close Executed</b>\nAll open positions closed ({ok}).",
+                                            reply_to_id=reply_to_id, force=True)
+                else:
+                    self.send_message(f"⚠️ Emergency close failed: {res.get('error', 'unknown error')}",
+                                        reply_to_id=reply_to_id, force=True)
             else:
                 self.send_message("⚠️ Action handler not attached.", reply_to_id=reply_to_id, force=True)
             return
