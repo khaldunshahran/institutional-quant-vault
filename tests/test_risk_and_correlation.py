@@ -2,17 +2,51 @@ import time
 from unittest.mock import MagicMock
 import pytest
 from scripts.autonomous_multi_asset_trader import AutonomousMultiAssetTrader
+from scripts.paper_fill_simulator import MAKER_FEE_RATE, TAKER_FEE_RATE
+
+
+class StubFillSimulator:
+    """Deterministic test double: every order fills in full at the requested
+    price with the correct fee tier. Used ONLY in tests — production paper
+    trading goes through the realistic PaperFillSimulator."""
+
+    def simulate_maker_fill(self, symbol, side, quantity, limit_price, max_wait_sec=120):
+        notional = round(quantity * limit_price, 2)
+        return {
+            "status": "FILLED", "symbol": symbol, "side": side,
+            "requested_qty": quantity, "filled_qty": quantity, "avg_price": limit_price,
+            "notional_usd": notional,
+            "fee_usd": round(notional * MAKER_FEE_RATE, 4), "is_maker": True,
+            "reason": None,
+            "timestamp_utc": "2026-09-21 00:00:00 UTC",
+        }
+
+    def simulate_taker_fill(self, symbol, side, quantity, reference_price=None):
+        price = reference_price if reference_price else 100.0
+        notional = round(quantity * price, 2)
+        return {
+            "status": "FILLED", "symbol": symbol, "side": side,
+            "requested_qty": quantity, "filled_qty": quantity, "avg_price": price,
+            "notional_usd": notional,
+            "fee_usd": round(notional * TAKER_FEE_RATE, 4), "is_maker": False,
+            "reason": None, "degraded": False,
+            "timestamp_utc": "2026-09-21 00:00:00 UTC",
+        }
 
 
 @pytest.fixture
 def isolated_trader(tmp_path):
-    trader = AutonomousMultiAssetTrader()
+    trader = AutonomousMultiAssetTrader(runtime_dir=str(tmp_path), auto_start=False)
     trader.positions_file = tmp_path / "autonomous_positions.json"
     trader.history_file = tmp_path / "autonomous_trade_history.json"
     trader.state_file = tmp_path / "autonomous_state.json"
+    trader.pnl_ledger_file = tmp_path / "pnl_ledger.jsonl"
+    trader.decision_log_file = tmp_path / "decision_log.jsonl"
     trader.telegram_bot = MagicMock()
     trader.episodic_memory = MagicMock()
     trader.open_positions = {}
+    # Deterministic fills: no network in tests.
+    trader.execution_adapter.fill_simulator = StubFillSimulator()
     return trader
 
 

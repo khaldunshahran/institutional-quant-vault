@@ -51,8 +51,30 @@ class DvolEngine:
             return self.cached_metrics
 
         val = self.fetch_dvol()
+        # LOUD failure (2026-09-21, CTO review): a dead Deribit connection must
+        # NEVER present as EXTREME_VOL_SQUEEZE (the old 34.9 default did exactly
+        # that — failure reading as the highest-conviction signal). When there
+        # is no live value and no usable cache, report DATA_UNAVAILABLE.
+        degraded = False
         if val is None:
-            val = self.cached_metrics.get("dvol", 34.9)
+            cached_val = (self.cached_metrics or {}).get("dvol")
+            if cached_val is not None:
+                val = cached_val
+                degraded = True  # stale cache: usable but explicitly flagged
+            else:
+                degraded = True
+                self.cached_metrics = {
+                    "dvol": None,
+                    "dvol_regime": "DATA_UNAVAILABLE",
+                    "dvol_label": "⚠️ DVOL FEED DOWN",
+                    "bias_note": "Deribit DVOL unreachable and no cached value. No volatility regime signal.",
+                    "runner_multiplier": 1.0,
+                    "degraded": True,
+                    "degradation_reason": "deribit_unreachable",
+                    "last_updated": now
+                }
+                self.last_update = now
+                return self.cached_metrics
 
         val = round(val, 2)
 
@@ -82,6 +104,8 @@ class DvolEngine:
             "dvol_label": regime_label,
             "bias_note": bias_note,
             "runner_multiplier": runner_multiplier,
+            "degraded": degraded,
+            "degradation_reason": "stale_cache: deribit fetch failed" if degraded else None,
             "last_updated": now
         }
         self.last_update = now

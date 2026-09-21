@@ -181,6 +181,9 @@ class MTFTechnicalEngine:
         k_1w = self.fetch_klines("1w", 60)
 
         spot = current_spot or (k_1m[-1]["close"] if k_1m else 81000.0)
+        # LOUD failure: if every kline fetch failed, this summary is fabricated
+        # from defaults (spot 81000.0, RSI 50.0, ATR 350.0). Flag it.
+        mtf_degraded = not (k_1m or k_15m or k_4h or k_8h or k_12h or k_1w)
 
         # 1. 1M Micro Momentum
         closes_1m = [c["close"] for c in k_1m]
@@ -309,6 +312,8 @@ class MTFTechnicalEngine:
             "macro_alignment": macro_alignment,
             "bull_votes": bull_votes,
             "bear_votes": bear_votes,
+            "degraded": mtf_degraded,
+            "degradation_reason": "all_klines_unavailable" if mtf_degraded else None,
             "summary_text": (
                 f"MTF Bias: {macro_alignment} (Bull: {bull_votes}/5, Bear: {bear_votes}/5) | "
                 f"4H RSI: {rsi_4h} | 4H BB %B: {boll_4h['pct_b']:.2f} | 4H ATR: ${atr_4h:.0f}"

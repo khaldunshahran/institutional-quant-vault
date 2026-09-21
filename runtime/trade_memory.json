@@ -1,25 +1,5 @@
 [
   {
-    "trade_id": "quant_BTCUSDT_1789948605",
-    "timestamp": 1789948814.7733335,
-    "timestamp_utc": "2026-09-21 00:00:14 UTC",
-    "side": "LONG",
-    "entry_price": 100.0,
-    "exit_price": 81184.3,
-    "realized_pnl": 4054215.0,
-    "exit_reason": "TP2_RUNNER_TARGET",
-    "is_win": true,
-    "strategy_mode": "TREND_EXPANSION",
-    "entry_metrics": {
-      "hurst": 0.5,
-      "obi": 0.0,
-      "cvd_15m": 0.0,
-      "session": "UNKNOWN",
-      "robust_z": 0.0
-    },
-    "lesson": "Target hit (+$4054215.00): LONG executed at OBI +0.00 with CVD +0.0 BTC. Setup high conviction."
-  },
-  {
     "trade_id": "quant_1000PEPEUSDT_2026-09-19 23:27:41 UTC",
     "timestamp": 1789860636.1799214,
     "timestamp_utc": "2026-09-19 23:30:36 UTC",

@@ -96,6 +96,8 @@ class JevDecisionEngine:
         self.max_reversal_risk = max_reversal_risk
         self.model_name = model_name
         self.client: Optional[TypeSafeClient] = None
+        self._consecutive_live_failures: int = 0
+        self._max_live_failures_before_alarm: int = 5
 
         if TYPESAFE_AVAILABLE and self.api_key:
             try:
@@ -402,6 +404,7 @@ class JevDecisionEngine:
 
         start_t = time.time()
         now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        live_error: Optional[str] = None
 
         # If live TypeSafe Jev API is available, ask Jev System One:
         if self.is_live_ready():
@@ -441,7 +444,12 @@ class JevDecisionEngine:
                         instructions=f"Is there a high risk (>35%) of an immediate adverse fakeout or reversal on {symbol}?"
                     )
                 }
-                response = self.client.system_one(state=state, questions=questions)
+                response = self.client.system_one(
+                    state=state,
+                    questions=questions,
+                    model=self.model_name,
+                    timeout=8.0,
+                )
                 answers = response.answers
                 verdict = answers["trade_verdict"].choice
                 conviction = answers["conviction_score"].score
@@ -452,17 +460,32 @@ class JevDecisionEngine:
                     and conviction >= 3.0
                     and trap_risk <= 0.40
                 )
+                self._consecutive_live_failures = 0
                 return {
                     "approved": approved,
                     "verdict": verdict,
                     "conviction": conviction,
                     "trap_risk": round(trap_risk, 3),
                     "engine_mode": "typesafe-jev-system-one",
+                    "live_attempted": True,
+                    "live_error": None,
                     "latency_ms": round((time.time() - start_t) * 1000, 1),
                     "timestamp_utc": now_utc
                 }
             except Exception as e:
-                logger.warning(f"[JEV] TypeSafe futures evaluation failed: {e}. Falling back to heuristic.")
+                self._consecutive_live_failures += 1
+                # LOUD failure: a failed live call must never silently degrade to
+                # the heuristic. Operators need to know the "brain" is offline.
+                logger.error(
+                    f"[JEV] TypeSafe live evaluation FAILED ({self._consecutive_live_failures} consecutive): {e}. "
+                    f"Falling back to heuristic matrix."
+                )
+                if self._consecutive_live_failures == self._max_live_failures_before_alarm:
+                    logger.error(
+                        f"[JEV] ALARM: {self._max_live_failures_before_alarm} consecutive live Jev failures. "
+                        f"Check TYPESAFE_API_KEY / network. Running on heuristics until recovery."
+                    )
+                live_error = str(e)[:200]
 
         # High-Fidelity Heuristic Matrix:
         score = 3.0
@@ -519,6 +542,8 @@ class JevDecisionEngine:
             "conviction": round(max(1.0, min(5.0, score)), 1),
             "trap_risk": round(max(0.05, min(0.95, trap_risk)), 3),
             "engine_mode": "jev-heuristic-matrix",
+            "live_attempted": self.is_live_ready(),
+            "live_error": live_error,
             "latency_ms": round((time.time() - start_t) * 1000, 1),
             "timestamp_utc": now_utc
         }

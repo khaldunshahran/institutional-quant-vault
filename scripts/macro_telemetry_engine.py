@@ -53,6 +53,9 @@ class MacroTelemetryEngine:
         ethbtc = self.fetch_24hr_ticker("ETHBTC")
         solbtc = self.fetch_24hr_ticker("SOLBTC")
 
+        # LOUD failure: hardcoded fallbacks (gold 4365.0 etc.) are stale magic
+        # numbers, not live macro state. Flag them.
+        macro_degraded = paxg is None or ethbtc is None or solbtc is None
         gold_price = paxg["last_price"] if paxg else 4365.0
         gold_chg = paxg["price_change_pct"] if paxg else 0.0
 
@@ -96,6 +99,8 @@ class MacroTelemetryEngine:
             "macro_risk_regime": regime,
             "macro_bias_score": bias_score,
             "macro_description": desc,
+            "degraded": macro_degraded,
+            "degradation_reason": "ticker_fetch_failed: using stale defaults" if macro_degraded else None,
             "last_updated": now
         }
         self.last_update = now

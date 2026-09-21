@@ -40,11 +40,13 @@ htmlcov/
 
 # Runtime logs & dynamic files (preserve clean template structure)
 runtime/*.log
+runtime/*.jsonl
 runtime/binance_orders.json
 runtime/trades_paper.json
 runtime/directional_trades.json
 runtime/telegram_outbox.json
 runtime/sentry_hourly_log.json
+*.bundle
 scratch/
 scratch_*.py
 

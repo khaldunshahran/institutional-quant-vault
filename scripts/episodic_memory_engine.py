@@ -39,30 +39,48 @@ class EpisodicMemoryEngine:
         realized_pnl: float,
         exit_reason: str,
         entry_metrics: Dict[str, Any],
-        duration_sec: float = 0.0
+        duration_sec: float = 0.0,
+        metrics_provenance: str = "live",
     ) -> Dict[str, Any]:
         """
         Synthesizes a quantitative post-mortem and appends it to episodic memory.
+
+        metrics_provenance: "live" for metrics measured at entry time by the
+        trading loop; "backfilled" for historical records reconstructed without
+        entry telemetry. Backfilled records are stored but NEVER used for
+        similarity matching in retrieve_relevant_lessons, because their metrics
+        were not observed (using them would let outcome labels masquerade as
+        predictive features).
         """
         is_win = realized_pnl > 0.0
         hurst = entry_metrics.get("hurst", 0.50)
+        # Only claim causal insight about flow when flow was actually measured.
+        # Defaults of 0.0 previously generated confident-sounding but fabricated
+        # diagnoses ("lacked strong CVD taker conviction (+0.0 BTC)") on every
+        # stop-loss. That ends here.
+        obi_provided = "obi" in entry_metrics
+        cvd_provided = "perp_cvd_15m" in entry_metrics
         obi = entry_metrics.get("obi", 0.0)
         cvd = entry_metrics.get("perp_cvd_15m", 0.0)
         session = entry_metrics.get("session_name", "UNKNOWN")
         strategy_mode = entry_metrics.get("strategy_mode", "TREND_EXPANSION")
 
-        # Synthesize quantitative takeaway
+        # Synthesize quantitative takeaway (honest about missing telemetry)
         if is_win:
             if exit_reason == "TAKE_PROFIT_2":
                 lesson = f"Runner win (+${realized_pnl:.2f}): {side} held through TP1 to TP2 with Hurst {hurst:.2f}. Trend rider validated."
-            else:
+            elif obi_provided and cvd_provided:
                 lesson = f"Target hit (+${realized_pnl:.2f}): {side} executed at OBI {obi:+.2f} with CVD {cvd:+.1f} BTC. Setup high conviction."
+            else:
+                lesson = f"Target hit (+${realized_pnl:.2f}): {side} closed in profit. Entry flow telemetry unavailable; no causal attribution."
         else:
             if exit_reason == "STOP_LOSS":
                 if session in ("ASIA_RANGE", "OFF_HOURS_DRIFT"):
                     lesson = f"Loss (-${abs(realized_pnl):.2f}): {side} stopped out in {session}. Tighten invalidation and require OBI > +0.30."
-                elif abs(cvd) < 10.0:
+                elif cvd_provided and abs(cvd) < 10.0:
                     lesson = f"Loss (-${abs(realized_pnl):.2f}): {side} lacked strong CVD taker conviction ({cvd:+.1f} BTC). Require strong flow."
+                elif not cvd_provided:
+                    lesson = f"Loss (-${abs(realized_pnl):.2f}): {side} invalidation hit at ${exit_price:.1f}. Entry flow telemetry unavailable; no causal attribution."
                 else:
                     lesson = f"Loss (-${abs(realized_pnl):.2f}): Invalidation hit at ${exit_price:.1f}. Controlled loss under -2% risk cap."
             elif exit_reason == "ALPHA_DECAY_TIMEOUT":
@@ -81,6 +99,7 @@ class EpisodicMemoryEngine:
             "exit_reason": exit_reason,
             "is_win": is_win,
             "strategy_mode": strategy_mode,
+            "metrics_provenance": metrics_provenance,
             "entry_metrics": {
                 "hurst": hurst,
                 "obi": obi,
@@ -107,8 +126,16 @@ class EpisodicMemoryEngine:
     ) -> Dict[str, Any]:
         """
         Retrieves the most contextually relevant historical trade lessons.
+
+        Only records with metrics_provenance == "live" (metrics actually
+        measured at entry time) participate in similarity matching. Backfilled
+        records are stored for audit but excluded, because matching on
+        reconstructed metrics would let outcome labels masquerade as
+        predictive features.
         """
-        if not self.memories:
+        # Quarantine: never learn from backfilled / fabricated metrics.
+        live_memories = [m for m in self.memories if m.get("metrics_provenance", "live") == "live"]
+        if not live_memories:
             return {
                 "has_memory": False,
                 "lesson_summary": "Initial baseline session. Establishing episodic track record.",
@@ -118,7 +145,7 @@ class EpisodicMemoryEngine:
 
         # Filter for similar setups (matching side or matching session/regime)
         matches = []
-        for m in self.memories:
+        for m in live_memories:
             score = 0
             if m.get("side") == current_side:
                 score += 2
@@ -144,7 +171,7 @@ class EpisodicMemoryEngine:
             "lesson_summary": summary,
             "top_lessons": lessons,
             "win_rate_similar": win_rate,
-            "total_memories_stored": len(self.memories),
+            "total_memories_stored": len(live_memories),
         }
 
     def _load_memories(self) -> List[Dict[str, Any]]:

@@ -1172,19 +1172,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             px = float(payload.get("price", 112.0))
             res = GLOBAL_BINANCE_ADAPTER.execute_order(sym, side, qty, px) if GLOBAL_BINANCE_ADAPTER else {"success": False}
             if res.get("success") and GLOBAL_TELEGRAM_BOT:
-                sl_calc = round(px * 0.985 if side == "BUY" else px * 1.015, 4)
-                tp1_calc = round(px * 1.02 if side == "BUY" else px * 0.98, 4)
-                tp2_calc = round(px * 1.04 if side == "BUY" else px * 0.96, 4)
+                # Report the ACTUAL fill (price/qty may differ via partial fills),
+                # never the requested price.
+                fill = res.get("order", {})
+                fill_px = float(fill.get("price", px))
+                fill_qty = float(fill.get("quantity", qty))
+                fill_status = fill.get("status", "FILLED")
+                sl_calc = round(fill_px * 0.985 if side == "BUY" else fill_px * 1.015, 4)
+                tp1_calc = round(fill_px * 1.02 if side == "BUY" else fill_px * 0.98, 4)
+                tp2_calc = round(fill_px * 1.04 if side == "BUY" else fill_px * 0.96, 4)
                 GLOBAL_TELEGRAM_BOT.notify_entry(
                     symbol=sym,
                     side=side,
-                    price=px,
+                    price=fill_px,
                     leverage=10,
                     sl=sl_calc,
                     tp1=tp1_calc,
                     tp2=tp2_calc,
-                    ev_usd=round(qty * px * 0.03, 2),
-                    rationale="Binance Full Universe Alpha Breakout / Mispricing"
+                    ev_usd=round(fill_qty * fill_px * 0.03, 2),
+                    rationale=f"Binance Full Universe Alpha Breakout / Mispricing (fill: {fill_status}, fee ${fill.get('fee_usd', 0)})"
                 )
             self.send_json(res)
         elif path == "/api/telegram/test":

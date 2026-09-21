@@ -10,6 +10,12 @@ if str(_SCRIPTS_DIR) not in sys.path:
 Dedicated TypeSafe Jev Directional Engine for Bitcoin Perpetual Futures
 Author: Google Antigravity (Advanced Agentic Systems)
 
+NOTE (2026-09-21, CTO review): this engine is consumed ONLY by the dashboard UI
+(ui/server.py) and its own __main__ block. It is NOT in the autonomous trading
+loop. The engine that gates live entries is JevDecisionEngine
+(scripts/jev_decision_engine.py)::evaluate_futures_setup. Do not reason about
+trading behavior from this module's outputs.
+
 Empowers TypeSafe Jev with tier-1 quantitative trading superpowers:
 - Multi-timeframe trend alignment (1m, 15m, 4h, 8h, 12h, 1w)
 - Hurst Exponent (H) regime classification (Random walk lockout)
@@ -31,9 +37,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 
 try:
-    from typesafe import TypeSafe
-    from typesafe.eval import Choice, Score, Noul
-    from typesafe.types import ChoiceAnswer, ScoreAnswer, NoulAnswer
+    from typesafe_sdk import TypeSafeClient, Choice, Score, Noul
+    from typesafe_sdk import ChoiceAnswer, ScoreAnswer, NoulAnswer
     TYPESAFE_AVAILABLE = True
 except ImportError:
     TYPESAFE_AVAILABLE = False
@@ -145,7 +150,9 @@ class JevDirectionalEngine:
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY", "")
+        self.model_name = "jev-latest"
         self.client = None
+        self._consecutive_live_failures: int = 0
         self.math_engine = MathQuantEngine()
         self.order_flow_engine = OrderFlowEngine()
         self.macro_engine = MacroTelemetryEngine()
@@ -159,7 +166,7 @@ class JevDirectionalEngine:
 
         if TYPESAFE_AVAILABLE and self.api_key and self.api_key.startswith("ts_"):
             try:
-                self.client = TypeSafe(api_key=self.api_key)
+                self.client = TypeSafeClient(api_key=self.api_key)
                 logger.info("TypeSafe Jev Directional Engine initialized with live API key.")
             except Exception as e:
                 logger.warning(f"Could not connect to TypeSafe Jev API: {e}. Running in MTF-Math Engine mode.")
@@ -222,7 +229,11 @@ class JevDirectionalEngine:
                     spot_price, start_t, now_utc
                 )
             except Exception as e:
-                logger.error(f"Error calling TypeSafe Jev: {e}. Using MTF Heuristic.")
+                self._consecutive_live_failures += 1
+                logger.error(
+                    f"[JEV-DIRECTIONAL] TypeSafe live call FAILED "
+                    f"({self._consecutive_live_failures} consecutive): {e}. Using MTF Heuristic."
+                )
 
         return self._evaluate_mtf_heuristic(
             mtf_data, institutional_data, math_data, order_flow_data,
@@ -333,13 +344,14 @@ class JevDirectionalEngine:
             ),
         }
 
-        resp = self.client.system_one(state=state, questions=questions)
+        resp = self.client.system_one(state=state, questions=questions, model=self.model_name, timeout=10.0)
         ans = resp.answers
 
         bias_choice = ans["directional_bias"].choice
         conf = ans["directional_bias"].confidence or 0.60
         conviction = ans["edge_conviction"].score
         trap_risk = ans["counter_trend_trap_risk"].noul
+        self._consecutive_live_failures = 0
 
         # STRICT MACRO TREND GUARD
         if "BULLISH" in macro_align and bias_choice == "SELL_SHORT":
@@ -397,7 +409,9 @@ class JevDirectionalEngine:
             signal_type = "NEUTRAL"
             signal_label = "EV HURDLE BLOCKED"
 
-        desc = f"Jev System One: {signal_label} (Conviction {conviction:.1f}/5.0). OBI: {order_book_data.get('obi', 0.0):+.2f}, DVOL: {dvol_data.get('dvol', 35.0):.1f} ({dvol_regime})."
+        dvol_val = dvol_data.get("dvol")
+        dvol_str = f"{dvol_val:.1f}" if isinstance(dvol_val, (int, float)) else "N/A"
+        desc = f"Jev System One: {signal_label} (Conviction {conviction:.1f}/5.0). OBI: {order_book_data.get('obi', 0.0):+.2f}, DVOL: {dvol_str} ({dvol_regime})."
 
         # ----------------------------------------------------
         # SUPERPOWER 3: SMART MAKER POST-ONLY PRICING

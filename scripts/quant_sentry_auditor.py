@@ -65,19 +65,20 @@ class QuantSentryAuditor:
         trades_24h = []
         trades_1h = []
         for t in trades:
-            # Parse closed timestamp or fallback
+            # Parse closed timestamp or parse closed_at string
             ts = t.get("closed_timestamp", 0)
-            if not ts:
-                # Approximate from closed_at string or include all recent
-                trades_24h.append(t)
-            else:
+            if not ts and "closed_at" in t:
+                try:
+                    clean_str = str(t["closed_at"]).replace(" UTC", "").replace("Z", "").replace("T", " ")
+                    ts = time.mktime(time.strptime(clean_str[:19], "%Y-%m-%d %H:%M:%S"))
+                except Exception:
+                    ts = 0
+            
+            if ts:
                 if ts >= cutoff_24h:
                     trades_24h.append(t)
                 if ts >= cutoff_1h:
                     trades_1h.append(t)
-
-        if not trades_24h:
-            trades_24h = trades[-100:]  # fallback to last 100
 
         total_trades = len(trades_24h)
         wins = [t for t in trades_24h if float(t.get("pnl_usd", 0)) > 0]

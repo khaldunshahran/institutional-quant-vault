@@ -64,22 +64,29 @@ class OrderBookEngine:
 
         depth = self.fetch_l2_depth(target_sym)
         if not depth or not depth["bids"] or not depth["asks"]:
-            fallback = cached_entry or {
-                "symbol": target_sym,
-                "obi_pct": 0.0,
-                "obi_ratio": 0.0,
-                "obi_bias": "BALANCED",
-                "bid_depth_usd_08": 0.0,
-                "ask_depth_usd_08": 0.0,
-                "bid_depth_m": 0.0,
-                "ask_depth_m": 0.0,
-                "nearest_bid_wall": None,
-                "nearest_ask_wall": None,
-                "wall_summary": "Order book depth unavailable",
-                "best_bid": current_spot or 0.0,
-                "best_ask": current_spot or 0.0,
-                "last_updated": now
-            }
+            if cached_entry:
+                fallback = dict(cached_entry)
+                fallback["degraded"] = True
+                fallback["degradation_reason"] = "stale_cache: depth fetch failed"
+            else:
+                fallback = {
+                    "symbol": target_sym,
+                    "obi_pct": 0.0,
+                    "obi_ratio": 0.0,
+                    "obi_bias": "BALANCED",
+                    "bid_depth_usd_08": 0.0,
+                    "ask_depth_usd_08": 0.0,
+                    "bid_depth_m": 0.0,
+                    "ask_depth_m": 0.0,
+                    "nearest_bid_wall": None,
+                    "nearest_ask_wall": None,
+                    "wall_summary": "Order book depth unavailable",
+                    "best_bid": current_spot or 0.0,
+                    "best_ask": current_spot or 0.0,
+                    "degraded": True,
+                    "degradation_reason": "depth_unavailable",
+                    "last_updated": now
+                }
             return fallback
 
         bids = depth["bids"]
@@ -178,6 +185,7 @@ class OrderBookEngine:
             "wall_summary": wall_summary,
             "best_bid": best_bid,
             "best_ask": best_ask,
+            "degraded": False,
             "last_updated": now
         }
         self.symbol_cache[target_sym] = state

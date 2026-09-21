@@ -15,11 +15,20 @@ import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+try:
+    from scripts.paper_fill_simulator import PaperFillSimulator
+except ImportError:  # pragma: no cover - direct script execution
+    from paper_fill_simulator import PaperFillSimulator
+
 class BinanceExecutionAdapter:
     def __init__(self, mode: str = "paper", ledger_path: str = "runtime/binance_orders.json"):
         self.mode = mode.lower() # "paper" or "live"
         self.ledger_path = Path(ledger_path)
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Paper fill simulator: the single execution model for paper mode.
+        # (Live mode still sends real GTX post-only orders to Binance.)
+        self.fill_simulator = PaperFillSimulator(cache_dir=str(self.ledger_path.parent))
         
         # Load API keys from environment or .env
         self.api_key = os.getenv("BINANCE_API_KEY", "").strip()
@@ -102,23 +111,47 @@ class BinanceExecutionAdapter:
         Uses LIMIT_MAKER / post-only (GTX) for 67% fee reduction (0.015%).
         """
         side = side.upper()
-        notional = round(quantity * price, 2)
-        maker_fee = round(notional * 0.00015, 4) # 0.015% Maker rate
         now = time.time()
         order_id = client_order_id or f"jev_{int(now*1000)}"
 
-        # 1. PAPER EXECUTION
+        # 1. PAPER EXECUTION — routed through the realistic fill simulator.
+        # Post-only maker: may be REJECTED (would cross), PARTIAL, or EXPIRED.
+        # No more instant fills at the requested price.
         if self.mode != "live":
+            if order_type == "LIMIT_MAKER":
+                fill = self.fill_simulator.simulate_maker_fill(
+                    symbol, side, quantity, price
+                )
+            else:
+                fill = self.fill_simulator.simulate_taker_fill(
+                    symbol, side, quantity
+                )
+            if fill["status"] in ("REJECTED", "EXPIRED") or fill["filled_qty"] <= 0:
+                return {
+                    "success": False,
+                    "error": f"Paper fill {fill['status']}: {fill.get('reason')}",
+                    "order": {
+                        "order_id": order_id,
+                        "symbol": symbol,
+                        "side": side,
+                        "status": fill["status"],
+                        "reason": fill.get("reason"),
+                        "execution_mode": "PAPER",
+                        "timestamp": now,
+                        "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)),
+                    },
+                }
             fill_result = {
                 "order_id": order_id,
                 "symbol": symbol,
                 "side": side,
-                "status": "FILLED",
-                "price": price,
-                "quantity": quantity,
-                "notional_usd": notional,
-                "fee_usd": maker_fee,
-                "fee_rate": "0.015% (Maker)",
+                "status": fill["status"],  # FILLED or PARTIAL
+                "price": fill["avg_price"],
+                "quantity": fill["filled_qty"],
+                "requested_quantity": fill["requested_qty"],
+                "notional_usd": fill["notional_usd"],
+                "fee_usd": fill["fee_usd"],
+                "fee_rate": "0.015% (Maker)" if fill["is_maker"] else "0.045% (Taker)",
                 "execution_mode": "PAPER",
                 "timestamp": now,
                 "time_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now))
@@ -173,7 +206,7 @@ class BinanceExecutionAdapter:
                     "status": data.get("status", "NEW"),
                     "price": float(data.get("price", price)),
                     "quantity": float(data.get("origQty", quantity)),
-                    "notional_usd": notional,
+                    "notional_usd": round(quantity * price, 2),
                     "fee_rate": "0.015% (Maker GTX)",
                     "execution_mode": "LIVE_BINANCE",
                     "timestamp": now,

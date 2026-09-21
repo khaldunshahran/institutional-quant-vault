@@ -94,26 +94,38 @@ class OrderFlowEngine:
         perp_candles = self.fetch_klines(symbol=clean_sym, is_futures=True, interval="1m", limit=20)
         spot_candles = self.fetch_klines(symbol=clean_sym, is_futures=False, interval="1m", limit=20)
 
-        # If futures klines unavailable, fallback to spot candles
+        # If futures klines unavailable, fallback to spot candles.
+        # LOUD labeling: consumers must know "perp" CVD is really spot data.
+        perp_source = "futures"
         if not perp_candles and spot_candles:
             perp_candles = spot_candles
+            perp_source = "spot_fallback"
 
         if not perp_candles:
-            fallback = self.symbol_cache.get(clean_sym) or {
-                "symbol": clean_sym,
-                "perp_cvd_5m": 0.0,
-                "perp_cvd_15m": 0.0,
-                "perp_cvd_15m_usd": 0.0,
-                "spot_cvd_5m": 0.0,
-                "spot_cvd_15m": 0.0,
-                "spot_cvd_15m_usd": 0.0,
-                "delta_share_pct": 0.0,
-                "order_flow_bias": "BALANCED",
-                "divergence_alert": "NORMAL",
-                "taker_ratio_15m": 1.0,
-                "price_chg_15m_pct": 0.0,
-                "last_updated": now
-            }
+            cached_fb = self.symbol_cache.get(clean_sym)
+            if cached_fb:
+                fallback = dict(cached_fb)
+                fallback["degraded"] = True
+                fallback["degradation_reason"] = "stale_cache: klines fetch failed"
+            else:
+                fallback = {
+                    "symbol": clean_sym,
+                    "perp_cvd_5m": 0.0,
+                    "perp_cvd_15m": 0.0,
+                    "perp_cvd_15m_usd": 0.0,
+                    "spot_cvd_5m": 0.0,
+                    "spot_cvd_15m": 0.0,
+                    "spot_cvd_15m_usd": 0.0,
+                    "delta_share_pct": 0.0,
+                    "order_flow_bias": "BALANCED",
+                    "divergence_alert": "NORMAL",
+                    "taker_ratio_15m": 1.0,
+                    "price_chg_15m_pct": 0.0,
+                    "degraded": True,
+                    "degradation_reason": "klines_unavailable",
+                    "perp_cvd_source": "unavailable",
+                    "last_updated": now
+                }
             return fallback
 
         # Base asset CVD (e.g. BTC, SOL, ETH)
@@ -174,6 +186,8 @@ class OrderFlowEngine:
             "price_chg_15m_pct": round(price_chg_pct, 3),
             "divergence_alert": divergence,
             "order_flow_bias": bias,
+            "degraded": False,
+            "perp_cvd_source": perp_source,
             "last_updated": now
         }
 

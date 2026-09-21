@@ -128,9 +128,13 @@ class SessionClockEngine:
 
         # 2. Liquidity Magnet Clusters for this specific symbol
         levels = self.fetch_24h_levels(symbol=clean_sym)
-        spot = current_spot or (levels["spot"] if levels else 81350.0)
-        h24 = levels["high_24h"] if levels else spot * 1.01
-        l24 = levels["low_24h"] if levels else spot * 0.99
+        # LOUD failure: never fabricate 24h levels from a hardcoded spot.
+        # If the ticker fetch fails, mark degraded so the trader skips entries
+        # instead of trading on fiction.
+        levels_degraded = levels is None
+        spot = current_spot or (levels["spot"] if levels else 0.0)
+        h24 = levels["high_24h"] if levels else 0.0
+        l24 = levels["low_24h"] if levels else 0.0
 
         # Projected liquidation pools:
         # Upper: Above 24h High (1.010x) -> Cluster of Short Stops
@@ -175,6 +179,8 @@ class SessionClockEngine:
             "is_upper_magnet": is_upper_magnet,
             "is_lower_magnet": is_lower_magnet,
             "magnet_status": magnet_status,
+            "degraded": levels_degraded,
+            "degradation_reason": "ticker_24h_unavailable" if levels_degraded else None,
             "last_updated": now_time
         }
 

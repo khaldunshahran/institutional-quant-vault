@@ -50,8 +50,11 @@ import math
 import statistics
 import threading
 import urllib.request
+import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(r"d:\5 minute btc\5min-btc-polymarket")
 if str(PROJECT_ROOT) not in sys.path:
@@ -67,6 +70,7 @@ from scripts.economic_calendar_engine import EconomicCalendarEngine
 from scripts.session_clock_engine import SessionClockEngine
 from scripts.jev_decision_engine import JevDecisionEngine
 from scripts.math_quant_engine import compute_hurst_exponent, compute_robust_mad_zscore
+from scripts.paper_fill_simulator import PaperFillSimulator, TP_WORKING_WAIT_SEC
 
 
 class AutonomousMultiAssetTrader:
@@ -80,8 +84,10 @@ class AutonomousMultiAssetTrader:
         max_daily_allocation_usd: float = 15_000.0,# $15,000 max margin allocation (15 positions * $1k)
         daily_profit_target_usd: float = 2_000.0,  # $2,000 (+2% daily target)
         daily_loss_limit_usd: float = 2_000.0,     # -$2,000 (-2% circuit breaker)
-        runtime_dir: str = r"d:\5 minute btc\5min-btc-polymarket\runtime"
+        runtime_dir: str = None,                   # default: <repo>/runtime
+        auto_start: bool = True
     ):
+        self.auto_start = auto_start
         self.max_concurrent_positions = max_concurrent_positions
         self.notional_per_trade_usd = notional_per_trade_usd
         self.leverage = leverage
@@ -89,12 +95,23 @@ class AutonomousMultiAssetTrader:
         self.max_daily_allocation_usd = max_daily_allocation_usd
         self.daily_profit_target_usd = daily_profit_target_usd
         self.daily_loss_limit_usd = daily_loss_limit_usd
-        self.runtime_dir = Path(runtime_dir)
+        # Resolve runtime relative to the repo, not a hardcoded Windows path
+        # (the old default created garbage directories on any other machine).
+        self.runtime_dir = Path(runtime_dir) if runtime_dir else Path(__file__).resolve().parent.parent / "runtime"
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
 
         self.positions_file = self.runtime_dir / "autonomous_positions.json"
         self.history_file = self.runtime_dir / "autonomous_trade_history.json"
         self.state_file = self.runtime_dir / "autonomous_state.json"
+        # Append-only decision log (JSONL): one line per signal evaluation.
+        # Never rewritten or truncated by the trader — this is the immutable
+        # record the paper-trading experiment is evaluated from.
+        self.decision_log_file = self.runtime_dir / "decision_log.jsonl"
+        # Append-only realized-PnL ledger (JSONL): one line per fill event
+        # (ENTRY, TP1, TP2, SL, BE_STOP, MANUAL, FUNDING). This is the single
+        # source of truth for money: daily PnL is derived from it, and each
+        # closed trade's pnl_usd is the sum of its legs. Never rewritten.
+        self.pnl_ledger_file = self.runtime_dir / "pnl_ledger.jsonl"
 
         self.execution_adapter = BinanceExecutionAdapter()
         self.telegram_bot = TelegramAlertBot()
@@ -183,8 +200,14 @@ class AutonomousMultiAssetTrader:
                     self.daily_trades_count = int(data.get("daily_trades_count", 0))
                     self.circuit_breaker_triggered = bool(data.get("circuit_breaker_triggered", False))
                     self.daily_goal_reached = bool(data.get("daily_goal_reached", False))
-                if data.get("enabled", True):  # Default to active on startup
+                if self.auto_start and data.get("enabled", False):
                     self.start()
+        except Exception:
+            pass
+        # The immutable fill ledger is the source of truth for money: rebuild
+        # today's counters from it so a restart can never drift from the books.
+        try:
+            self._reconcile_daily_pnl()
         except Exception:
             pass
 
@@ -216,6 +239,194 @@ class AutonomousMultiAssetTrader:
         except Exception:
             pass
 
+    def _log_decision(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None):
+        """
+        Appends one immutable decision record (JSONL). Outcomes: APPROVED,
+        REJECTED, SKIPPED. Called at every signal gate so the paper experiment
+        has a complete, reproducible decision trail — including rejections.
+        """
+        try:
+            record = {
+                "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+                "ts_epoch": time.time(),
+                "symbol": symbol,
+                "outcome": outcome,
+                "reason": reason,
+                "details": details or {},
+            }
+            with open(self.decision_log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception as e:
+            logger.warning(f"[DECISION-LOG] Failed to append decision record: {e}")
+
+    # ------------------------------------------------------------------
+    # Realized-PnL ledger: the single source of truth for money.
+    # ------------------------------------------------------------------
+    def _record_fill_event(
+        self,
+        trade_id: str,
+        symbol: str,
+        leg: str,           # ENTRY | TP1 | TP2 | SL | BE_STOP | MANUAL | FUNDING
+        side: str,          # BUY | SELL | FUND
+        qty: float,
+        price: float,
+        fee_usd: float,
+        realized_pnl_usd: float,
+        funding_usd: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Append one immutable fill event. The ONLY method that mutates
+        daily_pnl_usd, so daily PnL can never diverge from the ledger."""
+        event = {
+            "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+            "date_utc": time.strftime("%Y-%m-%d", time.gmtime()),
+            "ts_epoch": time.time(),
+            "trade_id": trade_id,
+            "symbol": symbol,
+            "leg": leg,
+            "side": side,
+            "qty": qty,
+            "price": price,
+            "fee_usd": round(fee_usd, 4),
+            "funding_usd": round(funding_usd, 4),
+            "realized_pnl_usd": round(realized_pnl_usd, 2),
+        }
+        try:
+            with open(self.pnl_ledger_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event) + "\n")
+        except Exception as e:
+            logger.warning(f"[PNL-LEDGER] Failed to append fill event: {e}")
+        self.daily_pnl_usd = round(self.daily_pnl_usd + realized_pnl_usd, 2)
+        return event
+
+    def _apply_exit_leg(self, pos: Dict[str, Any], leg: str, fill: Dict[str, Any], exit_side: str) -> float:
+        """Book a simulated exit fill against a position.
+
+        Realized PnL of the leg = gross - exit fee - pro-rata entry fee -
+        pro-rata funding. Updates the position's realized total and remaining
+        quantity, and appends to the immutable ledger.
+        """
+        entry_avg = float(pos.get("entry_avg_price", pos["entry_price"]))
+        entry_qty = float(pos.get("entry_qty", pos["quantity"]))
+        exit_qty = float(fill["filled_qty"])
+        if pos["side"] == "LONG":
+            gross = (float(fill["avg_price"]) - entry_avg) * exit_qty
+        else:
+            gross = (entry_avg - float(fill["avg_price"])) * exit_qty
+        share = (exit_qty / entry_qty) if entry_qty > 0 else 0.0
+        entry_fee_share = float(pos.get("entry_fee_usd", 0.0)) * share
+        funding_share = float(pos.get("funding_paid_usd", 0.0)) * share
+        realized = round(gross - float(fill["fee_usd"]) - entry_fee_share - funding_share, 2)
+        pos["realized_pnl_usd"] = round(float(pos.get("realized_pnl_usd", 0.0)) + realized, 2)
+        pos["remaining_quantity"] = round(float(pos.get("remaining_quantity", pos["quantity"])) - exit_qty, 4)
+        pos.setdefault("legs", []).append({
+            "leg": leg,
+            "side": exit_side,
+            "qty": exit_qty,
+            "price": fill["avg_price"],
+            "fee_usd": fill["fee_usd"],
+            "realized_pnl_usd": realized,
+            "ts_utc": fill.get("timestamp_utc"),
+        })
+        self._record_fill_event(
+            trade_id=pos.get("id", f"trade_{int(time.time())}"),
+            symbol=pos["symbol"],
+            leg=leg,
+            side=exit_side,
+            qty=exit_qty,
+            price=fill["avg_price"],
+            fee_usd=fill["fee_usd"],
+            realized_pnl_usd=realized,
+        )
+        return realized
+
+    def _fee_protected_be(self, pos: Dict[str, Any]) -> float:
+        """Break-even stop where a taker exit nets >= 0 after entry fee,
+        exit fee, and accrued funding. Replaces the old fixed 0.03% buffer,
+        which did not actually cover costs."""
+        return PaperFillSimulator.fee_protected_break_even(
+            entry_avg_price=float(pos.get("entry_avg_price", pos["entry_price"])),
+            quantity=float(pos.get("remaining_quantity", pos["quantity"])),
+            is_long=(pos["side"] == "LONG"),
+            entry_fee_usd=float(pos.get("entry_fee_usd", 0.0)),
+            funding_paid_usd=float(pos.get("funding_paid_usd", 0.0)),
+        )
+
+    def _accrue_funding(self, pos: Dict[str, Any], notional_usd: float) -> float:
+        """Charge one flat funding interval per 8h UTC window (00/08/16).
+        Conservative: always charged to the position, never credited."""
+        cur_day = time.strftime("%Y-%m-%d", time.gmtime())
+        window = int(time.gmtime().tm_hour // 8)
+        key = f"{cur_day}-{window}"
+        if pos.get("last_funding_window") == key:
+            return 0.0
+        pos["last_funding_window"] = key
+        if time.time() - float(pos.get("open_time", time.time())) < 300:
+            return 0.0  # positions under 5 minutes old are not charged
+        funding = PaperFillSimulator.compute_funding(notional_usd)
+        pos["funding_paid_usd"] = round(float(pos.get("funding_paid_usd", 0.0)) + funding, 2)
+        self._record_fill_event(
+            trade_id=pos.get("id", f"trade_{int(time.time())}"),
+            symbol=pos["symbol"],
+            leg="FUNDING",
+            side="FUND",
+            qty=0.0,
+            price=0.0,
+            fee_usd=0.0,
+            realized_pnl_usd=-funding,
+            funding_usd=funding,
+        )
+        return funding
+
+    def _reconcile_daily_pnl(self):
+        """Rebuild today's realized PnL and closed-trade count from the
+        immutable records (ledger + history). Called on startup and day
+        rollover so the in-memory counters can never drift from the books."""
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        total = 0.0
+        try:
+            if self.pnl_ledger_file.exists():
+                with open(self.pnl_ledger_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            e = json.loads(line)
+                        except Exception:
+                            continue
+                        if e.get("date_utc") == today:
+                            total += float(e.get("realized_pnl_usd", 0.0))
+        except Exception:
+            pass
+        self.daily_pnl_usd = round(total, 2)
+        try:
+            count = 0
+            if self.history_file.exists():
+                history = json.loads(self.history_file.read_text(encoding="utf-8"))
+                for t in history:
+                    if str(t.get("closed_at", ""))[:10] == today:
+                        count += 1
+            self.daily_trades_count = count
+        except Exception:
+            pass
+
+    def _lifetime_realized_pnl(self) -> float:
+        total = 0.0
+        try:
+            if self.pnl_ledger_file.exists():
+                with open(self.pnl_ledger_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            total += float(json.loads(line).get("realized_pnl_usd", 0.0))
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return round(total, 2)
+
+    @property
+    def equity_usd(self) -> float:
+        """Paper equity = starting bankroll + lifetime realized PnL.
+        Replaces the old fixed $100k balance that never moved."""
+        return round(self.account_balance_usd + self._lifetime_realized_pnl(), 2)
+
     def start(self) -> Dict[str, Any]:
         with self.lock:
             if self.is_running and self.worker_thread and self.worker_thread.is_alive():
@@ -240,8 +451,8 @@ class AutonomousMultiAssetTrader:
         cur_date = time.strftime("%Y-%m-%d", time.gmtime())
         if cur_date != self.daily_reset_date:
             self.daily_reset_date = cur_date
-            self.daily_pnl_usd = 0.0
-            self.daily_trades_count = 0
+            # Rebuild from the immutable records — never assume a clean zero.
+            self._reconcile_daily_pnl()
             self.circuit_breaker_triggered = False
             self.daily_goal_reached = False
 
@@ -263,6 +474,7 @@ class AutonomousMultiAssetTrader:
             "mode_name": "INSTITUTIONAL_QUANT_VAULT_100K",
             "account_balance_usd": self.account_balance_usd,
             "balance_usd": self.account_balance_usd,
+            "equity_usd": self.equity_usd,
             "max_daily_allocation_usd": self.max_daily_allocation_usd,
             "max_daily_margin": self.max_daily_allocation_usd,
             "daily_profit_target_usd": self.daily_profit_target_usd,
@@ -472,12 +684,21 @@ class AutonomousMultiAssetTrader:
 
         return self.macro_trend_cache.get("trend", "NEUTRAL_CHOP")
 
+    def _skip_eval(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None):
+        """Log a gate rejection/skip and return None. Every early exit from
+        _evaluate_signal goes through here so the decision log has complete
+        coverage — no silent rejections in the experiment record."""
+        self._log_decision(symbol, outcome, reason, details)
+        return None
+
     def _evaluate_signal(self, symbol: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # 1. Enforce Cooldown timer
         now = time.time()
         if symbol in self.symbol_cooldowns:
             if now < self.symbol_cooldowns[symbol]:
-                return None
+                return self._skip_eval(symbol, "SKIPPED", "COOLDOWN_ACTIVE", {
+                    "cooldown_until_epoch": self.symbol_cooldowns[symbol],
+                })
             else:
                 del self.symbol_cooldowns[symbol]
 
@@ -491,6 +712,9 @@ class AutonomousMultiAssetTrader:
                 "regime": "HAZARD_WINDOW",
                 "action": f"ENTRIES FROZEN: {news_shield.get('blackout_reason', 'Tier-1 News Blackout')}"
             }
+            self._log_decision(symbol, "SKIPPED", "NEWS_BLACKOUT", {
+                "blackout_reason": news_shield.get("blackout_reason"),
+            })
             return None
 
         price = data["price"]
@@ -498,7 +722,9 @@ class AutonomousMultiAssetTrader:
         highs = data.get("highs", closes)
         lows = data.get("lows", closes)
         if len(closes) < 14:
-            return None
+            return self._skip_eval(symbol, "SKIPPED", "INSUFFICIENT_DATA", {
+                "closes": len(closes),
+            })
 
         # 3. Session Liquidity Clock Check
         session_state = self.session_clock_engine.get_session_and_liquidity_state(current_spot=price, symbol=symbol)
@@ -528,6 +754,31 @@ class AutonomousMultiAssetTrader:
         ob_state = self.order_book_engine.get_order_book_state(current_spot=price, symbol=symbol)
         obi_pct = ob_state.get("obi_pct", 0.0)
 
+        # 4b. LOUD TELEMETRY GATE (2026-09-21, CTO review): if any core
+        # telemetry feed is degraded, SKIP the entry. Trading on neutral
+        # defaults during a feed outage is how phantom signals get taken.
+        degraded_sources = [
+            name for name, st in (
+                ("session_clock", session_state),
+                ("order_flow", order_flow),
+                ("order_book", ob_state),
+            ) if st.get("degraded", False)
+        ]
+        if degraded_sources:
+            self._log_decision(symbol, "SKIPPED", "TELEMETRY_DEGRADED", {
+                "degraded_sources": degraded_sources,
+                "reasons": {
+                    "session_clock": session_state.get("degradation_reason"),
+                    "order_flow": order_flow.get("degradation_reason"),
+                    "order_book": ob_state.get("degradation_reason"),
+                },
+            })
+            self._add_thought(
+                f"[{time.strftime('%H:%M:%S UTC')}] ⚠️ {symbol}: entry skipped — telemetry degraded "
+                f"({', '.join(degraded_sources)}). No trading blind."
+            )
+            return None
+
         is_gold = "XAU" in symbol or "PAXG" in symbol
         is_btc = symbol.startswith("BTC")
         asset_label = "Gold (XAU/USD)" if is_gold else symbol
@@ -550,11 +801,18 @@ class AutonomousMultiAssetTrader:
         # 1. High Velocity Trend Breakout (Sniper Hurdle)
         if hurst >= 0.55 and robust_z >= 1.25 and mom_15m >= 0.35 and rsi_14 >= 52 and rvol >= 1.20:
             if macro_trend == "BEARISH":
-                return None
+                return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
+                    "setup": "SNIPER_LONG", "macro_trend": macro_trend,
+                })
             if not session_breakout_allowed:
-                return None
+                return self._skip_eval(symbol, "SKIPPED", "SESSION_GATE", {
+                    "setup": "SNIPER_LONG",
+                })
             if "SELLING" in order_flow_bias or divergence == "BEARISH_EXHAUSTION":
-                return None
+                return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
+                    "setup": "SNIPER_LONG", "order_flow_bias": order_flow_bias,
+                    "divergence": divergence,
+                })
 
             jev_verdict = self.jev_engine.evaluate_futures_setup({
                 "symbol": symbol,
@@ -569,11 +827,17 @@ class AutonomousMultiAssetTrader:
                 "regime": "MOMENTUM_EXPANSION"
             })
             if not jev_verdict.get("approved", False):
+                self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                    "setup": "SNIPER_LONG", "side": "BUY",
+                    "jev_verdict": jev_verdict,
+                })
                 return None
 
             conv = min(98.0, 78.0 + hurst * 18.0 + robust_z * 3.5 + min(5.0, (rvol - 1.0) * 3.0))
             if conv < 82.0:
-                return None
+                return self._skip_eval(symbol, "REJECTED", "CONVICTION_HURDLE", {
+                    "setup": "SNIPER_LONG", "conviction": round(conv, 1),
+                })
 
             sig = {
                 "symbol": symbol,
@@ -587,6 +851,7 @@ class AutonomousMultiAssetTrader:
                 "conviction": round(conv, 1),
                 "jev_conviction": jev_verdict.get("conviction", 3.5),
                 "jev_trap_risk": jev_verdict.get("trap_risk", 0.15),
+                "jev_engine_mode": jev_verdict.get("engine_mode", "unknown"),
                 "atr_14": atr_14,
                 "sl_pct": sl_pct,
                 "tp1_pct": tp1_pct,
@@ -608,11 +873,18 @@ class AutonomousMultiAssetTrader:
 
         elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.35 and rsi_14 <= 48 and rvol >= 1.20:
             if macro_trend != "BEARISH":
-                return None
+                return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
+                    "setup": "SNIPER_SHORT", "macro_trend": macro_trend,
+                })
             if not session_breakout_allowed:
-                return None
+                return self._skip_eval(symbol, "SKIPPED", "SESSION_GATE", {
+                    "setup": "SNIPER_SHORT",
+                })
             if "BUYING" in order_flow_bias or divergence == "BULLISH_ABSORPTION":
-                return None
+                return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
+                    "setup": "SNIPER_SHORT", "order_flow_bias": order_flow_bias,
+                    "divergence": divergence,
+                })
 
             jev_verdict = self.jev_engine.evaluate_futures_setup({
                 "symbol": symbol,
@@ -627,11 +899,17 @@ class AutonomousMultiAssetTrader:
                 "regime": "MOMENTUM_EXPANSION"
             })
             if not jev_verdict.get("approved", False):
+                self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                    "setup": "SNIPER_SHORT", "side": "SELL",
+                    "jev_verdict": jev_verdict,
+                })
                 return None
 
             conv = min(98.0, 78.0 + hurst * 18.0 + abs(robust_z) * 3.5 + min(5.0, (rvol - 1.0) * 3.0))
             if conv < 82.0:
-                return None
+                return self._skip_eval(symbol, "REJECTED", "CONVICTION_HURDLE", {
+                    "setup": "SNIPER_SHORT", "conviction": round(conv, 1),
+                })
 
             sig = {
                 "symbol": symbol,
@@ -645,6 +923,7 @@ class AutonomousMultiAssetTrader:
                 "conviction": round(conv, 1),
                 "jev_conviction": jev_verdict.get("conviction", 3.5),
                 "jev_trap_risk": jev_verdict.get("trap_risk", 0.15),
+                "jev_engine_mode": jev_verdict.get("engine_mode", "unknown"),
                 "atr_14": atr_14,
                 "sl_pct": sl_pct,
                 "tp1_pct": tp1_pct,
@@ -668,9 +947,14 @@ class AutonomousMultiAssetTrader:
         if hurst < 0.42:
             if robust_z <= -2.00 and rsi_14 <= 28:
                 if macro_trend == "BEARISH":
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
+                        "setup": "ELASTIC_MEAN_REV_LONG", "macro_trend": macro_trend,
+                    })
                 if "SELLING" in order_flow_bias and divergence == "BEARISH_EXPANSION":
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
+                        "setup": "ELASTIC_MEAN_REV_LONG", "order_flow_bias": order_flow_bias,
+                        "divergence": divergence,
+                    })
 
                 jev_verdict = self.jev_engine.evaluate_futures_setup({
                     "symbol": symbol,
@@ -685,11 +969,17 @@ class AutonomousMultiAssetTrader:
                     "regime": "ELASTIC_STRETCH"
                 })
                 if not jev_verdict.get("approved", False):
+                    self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                        "setup": "ELASTIC_MEAN_REV_LONG", "side": "BUY",
+                        "jev_verdict": jev_verdict,
+                    })
                     return None
 
                 conv = min(95.0, 75.0 + abs(robust_z) * 5.0)
                 if conv < 82.0:
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "CONVICTION_HURDLE", {
+                        "setup": "ELASTIC_MEAN_REV_LONG", "conviction": round(conv, 1),
+                    })
 
                 sig = {
                     "symbol": symbol,
@@ -703,6 +993,7 @@ class AutonomousMultiAssetTrader:
                     "conviction": round(conv, 1),
                     "jev_conviction": jev_verdict.get("conviction", 3.5),
                     "jev_trap_risk": jev_verdict.get("trap_risk", 0.15),
+                    "jev_engine_mode": jev_verdict.get("engine_mode", "unknown"),
                     "atr_14": atr_14,
                     "sl_pct": sl_pct,
                     "tp1_pct": tp1_pct,
@@ -724,9 +1015,14 @@ class AutonomousMultiAssetTrader:
 
             elif robust_z >= 2.00 and rsi_14 >= 72:
                 if macro_trend != "BEARISH":
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
+                        "setup": "ELASTIC_MEAN_REV_SHORT", "macro_trend": macro_trend,
+                    })
                 if "BUYING" in order_flow_bias and divergence == "BULLISH_EXPANSION":
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
+                        "setup": "ELASTIC_MEAN_REV_SHORT", "order_flow_bias": order_flow_bias,
+                        "divergence": divergence,
+                    })
 
                 jev_verdict = self.jev_engine.evaluate_futures_setup({
                     "symbol": symbol,
@@ -741,11 +1037,17 @@ class AutonomousMultiAssetTrader:
                     "regime": "ELASTIC_STRETCH"
                 })
                 if not jev_verdict.get("approved", False):
+                    self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                        "setup": "ELASTIC_MEAN_REV_SHORT", "side": "SELL",
+                        "jev_verdict": jev_verdict,
+                    })
                     return None
 
                 conv = min(95.0, 75.0 + abs(robust_z) * 5.0)
                 if conv < 82.0:
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "CONVICTION_HURDLE", {
+                        "setup": "ELASTIC_MEAN_REV_SHORT", "conviction": round(conv, 1),
+                    })
 
                 sig = {
                     "symbol": symbol,
@@ -759,6 +1061,7 @@ class AutonomousMultiAssetTrader:
                     "conviction": round(conv, 1),
                     "jev_conviction": jev_verdict.get("conviction", 3.5),
                     "jev_trap_risk": jev_verdict.get("trap_risk", 0.15),
+                    "jev_engine_mode": jev_verdict.get("engine_mode", "unknown"),
                     "atr_14": atr_14,
                     "sl_pct": sl_pct,
                     "tp1_pct": tp1_pct,
@@ -778,6 +1081,13 @@ class AutonomousMultiAssetTrader:
                 }
                 return sig
 
+        self._log_decision(symbol, "REJECTED", "NO_SETUP_MATCHED", {
+            "hurst": round(hurst, 3),
+            "robust_z": round(robust_z, 2),
+            "rsi_14": round(rsi_14, 1),
+            "rvol": rvol,
+            "mom_15m": round(mom_15m, 3),
+        })
         return None
 
     def _open_position(self, signal: Dict[str, Any]):
@@ -819,6 +1129,26 @@ class AutonomousMultiAssetTrader:
 
         res = self.execution_adapter.execute_order(symbol, side, qty, price)
         if not res.get("success"):
+            # The fill simulator rejected/expired the post-only entry: no
+            # position, no silent fill. Logged for the experiment record.
+            self._log_decision(symbol, "REJECTED", "ENTRY_FILL_FAILED", {
+                "side": side,
+                "requested_qty": qty,
+                "limit_price": price,
+                "error": res.get("error"),
+            })
+            return
+        fill = res.get("order", {})
+        # Partial fills open a smaller position at the average fill price —
+        # never the full requested size at the requested price.
+        qty = float(fill.get("quantity", 0.0))
+        price = float(fill.get("price", price))
+        entry_fee_usd = float(fill.get("fee_usd", 0.0))
+        fill_status = fill.get("status", "FILLED")
+        if qty <= 0:
+            self._log_decision(symbol, "REJECTED", "ENTRY_ZERO_FILL", {
+                "side": side, "limit_price": price, "fill_status": fill_status,
+            })
             return
 
         is_long = (side == "BUY")
@@ -837,7 +1167,14 @@ class AutonomousMultiAssetTrader:
             "id": pos_id,
             "symbol": symbol,
             "side": "LONG" if is_long else "SHORT",
-            "entry_price": price,
+            "entry_price": price,          # average fill price (not the signal price)
+            "entry_avg_price": price,
+            "entry_qty": qty,              # filled quantity (partial fills open smaller)
+            "entry_fee_usd": round(entry_fee_usd, 4),
+            "funding_paid_usd": 0.0,
+            "realized_pnl_usd": 0.0,      # sum of booked exit legs (TP1 + runner)
+            "legs": [],
+            "last_funding_window": None,
             "quantity": qty,
             "remaining_quantity": qty,
             "notional_usd": round(qty * price, 2),
@@ -854,14 +1191,45 @@ class AutonomousMultiAssetTrader:
             "open_time_str": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)),
             "setup": signal.get("setup"),
             "conviction": signal.get("conviction"),
+            "hurst": signal.get("hurst", 0.50),
+            "robust_z": signal.get("z_score", 0.0),
+            "rvol": signal.get("rvol", 1.0),
             "jev_conviction": signal.get("jev_conviction", 3.5),
             "jev_trap_risk": signal.get("jev_trap_risk", 0.15),
+            "jev_engine_mode": signal.get("jev_engine_mode", "unknown"),
             "mode": self.execution_adapter.mode.upper(),
             "unrealized_pnl_usd": 0.0
         }
 
         self.open_positions[symbol] = position
         self._save_positions()
+
+        # Entry costs are realized the moment we pay them.
+        self._record_fill_event(
+            trade_id=pos_id,
+            symbol=symbol,
+            leg="ENTRY",
+            side=side,
+            qty=qty,
+            price=price,
+            fee_usd=entry_fee_usd,
+            realized_pnl_usd=-entry_fee_usd,
+        )
+
+        self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", {
+            "setup": position.get("setup"),
+            "side": position.get("side"),
+            "entry_price": price,
+            "fill_status": fill_status,
+            "entry_fee_usd": round(entry_fee_usd, 4),
+            "notional_usd": position.get("notional_usd"),
+            "jev_engine_mode": position.get("jev_engine_mode"),
+            "jev_conviction": position.get("jev_conviction"),
+            "jev_trap_risk": position.get("jev_trap_risk"),
+            "hurst": position.get("hurst"),
+            "robust_z": position.get("robust_z"),
+            "rvol": position.get("rvol"),
+        })
 
         thought = f"[{time.strftime('%H:%M:%S UTC')}] ⚡ STRIKE: {position['side']} {symbol} @ ${price:,.2f} | Size: ${position['notional_usd']:,.0f} (Margin: ${position['margin_collateral_usd']:,.0f}) | TP1: ${tp1:,.2f} (BE Armed)"
         self._add_thought(thought)
@@ -924,45 +1292,56 @@ class AutonomousMultiAssetTrader:
                 if unrealized_dist >= early_be_dist or pnl_pct >= 0.60:
                     pos["early_be_hit"] = True
                     pos["break_even_active"] = True
-                    be_buffer = entry_px * 0.0003
-                    pos["stop_loss"] = round(entry_px + be_buffer if is_long else entry_px - be_buffer, 4)
+                    # Honest break-even: a taker exit here must net >= 0 after
+                    # entry fee, exit fee, and accrued funding. The old fixed
+                    # +0.03% buffer did not actually cover costs.
+                    pos["stop_loss"] = self._fee_protected_be(pos)
                     self._save_positions()
                     self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] 🔒 EARLY BREAK-EVEN LOCKED on {symbol} at +1.0 ATR (+{pnl_pct:.2f}%). Risk is ZERO.")
                     print(f"[QUANT VAULT] 🔒 EARLY BREAK-EVEN LOCKED on {symbol} at +1.0 ATR (+{pnl_pct:.2f}%).")
 
             # 2. Fast TP1 Scale-Out (Bank 50% Profit & Move Stop strictly to Fee-Protected Break-Even)
+            # The TP1 leg is a real resting limit order: it only banks profit
+            # if the fill simulator actually fills it (trade-through + volume).
+            # A wick touch with no volume leaves the order working.
             if not pos.get("tp1_hit", False):
                 tp1_condition = (cur_price >= pos["tp1"]) if is_long else (cur_price <= pos["tp1"])
                 if tp1_condition:
                     scale_qty = round(qty * 0.5, 4)
-                    banked_pnl = round(unrealized_pnl * 0.5, 2)
-                    pos["remaining_quantity"] = round(qty - scale_qty, 4)
-                    pos["tp1_hit"] = True
-                    pos["break_even_active"] = True
+                    tp_exit_side = "SELL" if is_long else "BUY"
+                    tp_fill = self.execution_adapter.fill_simulator.simulate_maker_fill(
+                        symbol, tp_exit_side, scale_qty, pos["tp1"],
+                        max_wait_sec=TP_WORKING_WAIT_SEC,
+                    )
+                    if tp_fill["status"] in ("REJECTED", "EXPIRED") or tp_fill["filled_qty"] <= 0:
+                        self._log_decision(symbol, "NO_ACTION", "TP1_UNFILLED", {
+                            "tp1": pos["tp1"],
+                            "fill_status": tp_fill["status"],
+                            "reason": tp_fill.get("reason"),
+                        })
+                    else:
+                        banked_pnl = self._apply_exit_leg(pos, "TP1", tp_fill, tp_exit_side)
+                        pos["tp1_hit"] = True
+                        pos["break_even_active"] = True
+                        pos["stop_loss"] = self._fee_protected_be(pos)
+                        self._save_positions()
+                        self._save_state()
 
-                    # Fee-protected break-even buffer (+0.03% to guarantee positive/flat exit)
-                    be_buffer = entry_px * 0.0003
-                    pos["stop_loss"] = round(entry_px + be_buffer if is_long else entry_px - be_buffer, 4)
+                        thought = f"[{time.strftime('%H:%M:%S UTC')}] 💰 TP1 HIT on {symbol}! Banked ${banked_pnl:+.2f} (fill: {tp_fill['status']}). FREE TRADE LOCKED (SL -> Break-Even)."
+                        self._add_thought(thought)
+                        print(f"[QUANT VAULT] 💰 TP1 HIT on {symbol}! Banked ${banked_pnl:+.2f}. SL moved to Break-Even.")
 
-                    self.daily_pnl_usd += banked_pnl
-                    self._save_positions()
-                    self._save_state()
-
-                    thought = f"[{time.strftime('%H:%M:%S UTC')}] 💰 TP1 HIT on {symbol}! Banked ${banked_pnl:+.2f}. FREE TRADE LOCKED (SL -> Break-Even)."
-                    self._add_thought(thought)
-                    print(f"[QUANT VAULT] 💰 TP1 HIT on {symbol}! Banked ${banked_pnl:+.2f}. SL moved to Break-Even.")
-
-                    try:
-                        self.telegram_bot.notify_tp1(
-                            symbol=symbol,
-                            side=pos["side"],
-                            banked_pnl=banked_pnl,
-                            be_stop=pos["stop_loss"],
-                            daily_pnl=self.daily_pnl_usd,
-                            daily_target=self.daily_profit_target_usd
-                        )
-                    except Exception:
-                        pass
+                        try:
+                            self.telegram_bot.notify_tp1(
+                                symbol=symbol,
+                                side=pos["side"],
+                                banked_pnl=banked_pnl,
+                                be_stop=pos["stop_loss"],
+                                daily_pnl=self.daily_pnl_usd,
+                                daily_target=self.daily_profit_target_usd
+                            )
+                        except Exception:
+                            pass
 
             # 3. Dynamic Trailing Profit-Locker on Remaining 50% Runner
             if pos.get("tp1_hit"):
@@ -991,26 +1370,67 @@ class AutonomousMultiAssetTrader:
                         pos["stop_loss"] = trail_stop
                         self._add_thought(f"[{time.strftime('%H:%M:%S UTC')}] 📈 Trailing Stop ratcheted down on {symbol} to ${trail_stop:,.2f}.")
 
+            # Funding accrual: once per 8h UTC window, charged to the position.
+            try:
+                self._accrue_funding(pos, cur_price * max(float(qty), 0.0))
+            except Exception:
+                pass
+
             duration = now - float(pos.get("open_time", now))
 
-            # 4. Check Stop Loss / TP2 Full Exit
+            # 4. Check Stop Loss / TP2 Full Exit. Protective exits are TAKER:
+            # they cross the spread, pay taker fees, and incur slippage —
+            # never the exact stop price with zero cost.
             sl_condition = (cur_price <= pos["stop_loss"]) if is_long else (cur_price >= pos["stop_loss"])
             tp2_condition = (cur_price >= pos["tp2"]) if is_long else (cur_price <= pos["tp2"])
 
             if sl_condition or tp2_condition:
                 exit_reason = "TP2_RUNNER_TARGET" if tp2_condition else ("BREAK_EVEN_STOP" if pos.get("break_even_active") else "STOP_LOSS")
-                final_pnl = round(unrealized_pnl, 2)
-                self.daily_pnl_usd += final_pnl
+                leg = "TP2" if tp2_condition else ("BE_STOP" if pos.get("break_even_active") else "SL")
+                exit_side = "SELL" if is_long else "BUY"
+                remaining = float(pos.get("remaining_quantity", qty))
+                fill = self.execution_adapter.fill_simulator.simulate_taker_fill(
+                    symbol, exit_side, remaining, reference_price=cur_price
+                )
+                if fill["status"] != "FILLED" or float(fill.get("filled_qty", 0.0)) <= 0:
+                    # Fail-open for protective exits: the position MUST close
+                    # even if the book is unavailable. Book at the reference
+                    # price with a taker-fee estimate and flag it synthetic.
+                    fill = {
+                        "status": "FILLED",
+                        "filled_qty": remaining,
+                        "avg_price": cur_price,
+                        "fee_usd": PaperFillSimulator.compute_fee(remaining * cur_price, is_maker=False),
+                        "timestamp_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+                        "degraded": True,
+                        "synthetic": True,
+                    }
+                self._apply_exit_leg(pos, leg, fill, exit_side)
                 self.daily_trades_count += 1
+
+                # Final PnL = sum of ALL booked legs (TP1 + runner + funding).
+                # This is what the ledger says — TP1 is never double-counted.
+                final_pnl = round(float(pos.get("realized_pnl_usd", 0.0)), 2)
+                legs = pos.get("legs", [])
+                leg_qty = sum(float(l.get("qty", 0.0)) for l in legs)
+                if leg_qty > 0:
+                    avg_exit = sum(float(l.get("qty", 0.0)) * float(l.get("price", 0.0)) for l in legs) / leg_qty
+                else:
+                    avg_exit = cur_price
+                margin = float(pos.get("margin_collateral_usd", 0.0)) or 1.0
+                total_fees = round(float(pos.get("entry_fee_usd", 0.0)) + sum(float(l.get("fee_usd", 0.0)) for l in legs), 4)
 
                 trade_record = {
                     "symbol": symbol,
                     "side": pos["side"],
                     "entry_price": entry_px,
-                    "exit_price": cur_price,
+                    "exit_price": round(avg_exit, 6),
                     "pnl_usd": final_pnl,
-                    "pnl_pct": pos["unrealized_pnl_pct"],
+                    "pnl_pct": round(final_pnl / margin * 100.0, 1),
                     "exit_reason": exit_reason,
+                    "fees_usd": total_fees,
+                    "funding_usd": round(float(pos.get("funding_paid_usd", 0.0)), 4),
+                    "legs": legs,
                     "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
                     "mode": pos["mode"],
                     "duration_sec": int(duration)
@@ -1050,10 +1470,13 @@ class AutonomousMultiAssetTrader:
                         entry_metrics={
                             "hurst": pos.get("hurst", 0.50),
                             "robust_z": pos.get("robust_z", 0.0),
+                            "rvol": pos.get("rvol", 1.0),
                             "setup": pos.get("setup", "SCALP"),
-                            "symbol": sym
+                            "symbol": sym,
+                            "strategy_mode": "TREND_EXPANSION",
                         },
-                        duration_sec=rec.get("duration_sec", 0)
+                        duration_sec=rec.get("duration_sec", 0),
+                        metrics_provenance="live",
                     )
                 except Exception:
                     pass
@@ -1123,30 +1546,47 @@ class AutonomousMultiAssetTrader:
             except Exception:
                 pass
 
-            entry_px = pos["entry_price"]
+            entry_px = pos.get("entry_avg_price", pos["entry_price"])
             is_long = (pos["side"] == "LONG")
-            qty = pos.get("remaining_quantity", pos["quantity"])
-            if is_long:
-                unrealized_pnl = (cur_price - entry_px) * qty
-                pnl_pct = (cur_price - entry_px) / entry_px * 100.0
-            else:
-                unrealized_pnl = (entry_px - cur_price) * qty
-                pnl_pct = (entry_px - cur_price) / entry_px * 100.0
+            qty = float(pos.get("remaining_quantity", pos["quantity"]))
+            exit_side = "SELL" if is_long else "BUY"
 
-            final_pnl = round(unrealized_pnl, 2)
-            self.daily_pnl_usd += final_pnl
+            # Manual closes are taker exits: cross the spread, pay taker fees.
+            fill = self.execution_adapter.fill_simulator.simulate_taker_fill(
+                symbol, exit_side, qty, reference_price=cur_price
+            )
+            if fill["status"] != "FILLED" or float(fill.get("filled_qty", 0.0)) <= 0:
+                fill = {
+                    "status": "FILLED",
+                    "filled_qty": qty,
+                    "avg_price": cur_price,
+                    "fee_usd": PaperFillSimulator.compute_fee(qty * cur_price, is_maker=False),
+                    "timestamp_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+                    "degraded": True,
+                    "synthetic": True,
+                }
+            self._apply_exit_leg(pos, "MANUAL", fill, exit_side)
             self.daily_trades_count += 1
             now = time.time()
             duration = int(now - float(pos.get("open_time", now)))
+
+            final_pnl = round(float(pos.get("realized_pnl_usd", 0.0)), 2)
+            legs = pos.get("legs", [])
+            leg_qty = sum(float(l.get("qty", 0.0)) for l in legs)
+            avg_exit = (sum(float(l.get("qty", 0.0)) * float(l.get("price", 0.0)) for l in legs) / leg_qty) if leg_qty > 0 else cur_price
+            margin = float(pos.get("margin_collateral_usd", 0.0)) or 1.0
 
             rec = {
                 "symbol": symbol,
                 "side": pos["side"],
                 "entry_price": entry_px,
-                "exit_price": cur_price,
+                "exit_price": round(avg_exit, 6),
                 "pnl_usd": final_pnl,
-                "pnl_pct": round(pnl_pct * self.leverage, 2),
+                "pnl_pct": round(final_pnl / margin * 100.0, 1),
                 "exit_reason": reason,
+                "fees_usd": round(float(pos.get("entry_fee_usd", 0.0)) + sum(float(l.get("fee_usd", 0.0)) for l in legs), 4),
+                "funding_usd": round(float(pos.get("funding_paid_usd", 0.0)), 4),
+                "legs": legs,
                 "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
                 "mode": pos.get("mode", "PAPER"),
                 "duration_sec": duration
@@ -1162,11 +1602,19 @@ class AutonomousMultiAssetTrader:
                     trade_id=pos.get("id", f"trade_{int(now)}"),
                     side=rec["side"],
                     entry_price=entry_px,
-                    exit_price=cur_price,
+                    exit_price=rec["exit_price"],
                     realized_pnl=final_pnl,
                     exit_reason=reason,
-                    entry_metrics={"symbol": symbol},
-                    duration_sec=duration
+                    entry_metrics={
+                        "hurst": pos.get("hurst", 0.50),
+                        "robust_z": pos.get("robust_z", 0.0),
+                        "rvol": pos.get("rvol", 1.0),
+                        "setup": pos.get("setup", "SCALP"),
+                        "symbol": symbol,
+                        "strategy_mode": "TREND_EXPANSION",
+                    },
+                    duration_sec=duration,
+                    metrics_provenance="live",
                 )
             except Exception:
                 pass
@@ -1187,7 +1635,7 @@ class AutonomousMultiAssetTrader:
                     symbol=symbol,
                     side=rec["side"],
                     entry_price=entry_px,
-                    exit_price=cur_price,
+                    exit_price=rec["exit_price"],
                     pnl_usd=rec["pnl_usd"],
                     roe_pct=rec["pnl_pct"],
                     exit_reason=reason,

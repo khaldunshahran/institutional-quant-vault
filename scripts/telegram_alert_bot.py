@@ -580,6 +580,14 @@ class TelegramAlertBot:
             return
 
         # 7. Remote Position Close
+        if cmd == "/closeall":
+            if self.action_handler:
+                res = self.action_handler("closeall", {})
+                self.send_message("🚨 <b>Emergency Close Executed</b>\nAll open positions closed.", reply_to_id=reply_to_id, force=True)
+            else:
+                self.send_message("⚠️ Action handler not attached.", reply_to_id=reply_to_id, force=True)
+            return
+
         if cmd.startswith("/close"):
             parts = raw_text.split()
             if len(parts) >= 2:
@@ -594,14 +602,6 @@ class TelegramAlertBot:
                     self.send_message("⚠️ Action handler not attached.", reply_to_id=reply_to_id, force=True)
             else:
                 self.send_message("ℹ️ Usage: <code>/close XAUUSDT</code> or <code>/closeall</code>", reply_to_id=reply_to_id, force=True)
-            return
-
-        if cmd == "/closeall":
-            if self.action_handler:
-                res = self.action_handler("closeall", {})
-                self.send_message("🚨 <b>Emergency Close Executed</b>\nAll open positions closed.", reply_to_id=reply_to_id, force=True)
-            else:
-                self.send_message("⚠️ Action handler not attached.", reply_to_id=reply_to_id, force=True)
             return
 
         # 8. Greeting / Help Directory

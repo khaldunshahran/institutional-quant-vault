@@ -23,6 +23,13 @@ def sync_memories():
     for t in history:
         tid = f"quant_{t.get('symbol')}_{t.get('closed_at')}"
         if tid not in existing_ids:
+            # QUARANTINE (2026-09-21, CTO review): historical trade records do
+            # not contain entry telemetry (hurst, z-score, OBI, CVD were never
+            # logged at entry). We backfill ONLY what the record actually
+            # contains. Fabricating metrics by outcome (e.g. hurst=0.65 for
+            # winners) creates circular "lessons" where the label predicts the
+            # label. These records are stored with metrics_provenance="backfilled"
+            # and are excluded from similarity matching by the engine.
             engine.record_trade_post_mortem(
                 trade_id=tid,
                 side=t.get("side", "LONG"),
@@ -32,11 +39,10 @@ def sync_memories():
                 exit_reason=t.get("exit_reason", "CLOSED"),
                 entry_metrics={
                     "symbol": t.get("symbol"),
-                    "hurst": 0.65 if t.get("exit_reason") == "TP2_RUNNER_TARGET" else 0.48,
-                    "robust_z": 1.25,
-                    "session_name": "GLOBAL_AUTONOMOUS_SESSION"
+                    "session_name": "UNKNOWN",
                 },
-                duration_sec=float(t.get("duration_sec", 0))
+                duration_sec=float(t.get("duration_sec", 0)),
+                metrics_provenance="backfilled",
             )
             existing_ids.add(tid)
             added += 1
