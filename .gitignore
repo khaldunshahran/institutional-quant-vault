@@ -48,6 +48,7 @@ runtime/directional_trades.json
 runtime/telegram_outbox.json
 runtime/sentry_hourly_log.json
 runtime/pending_entries.json
+runtime/*.pid
 # Backups
 backups/
 *.bundle
