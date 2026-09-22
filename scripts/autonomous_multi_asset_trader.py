@@ -146,6 +146,8 @@ class AutonomousMultiAssetTrader:
         # source of truth for money: daily PnL is derived from it, and each
         # closed trade's pnl_usd is the sum of its legs. Never rewritten.
         self.pnl_ledger_file = self.runtime_dir / "pnl_ledger.jsonl"
+        self.shadow_pnl_ledger_file = self.runtime_dir / "shadow_pnl_ledger.jsonl"
+        self.shadow_trades = []
 
         self.execution_adapter = BinanceExecutionAdapter()
         self.telegram_bot = TelegramAlertBot()
@@ -1057,11 +1059,13 @@ class AutonomousMultiAssetTrader:
 
         return self.macro_trend_cache.get("trend", "NEUTRAL_CHOP")
 
-    def _skip_eval(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None):
+    def _skip_eval(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None, current_price: float = 0.0, current_atr: float = 0.0, side: str = ""):
         """Log a gate rejection/skip and return None. Every early exit from
         _evaluate_signal goes through here so the decision log has complete
         coverage — no silent rejections in the experiment record."""
         self._log_decision(symbol, outcome, reason, details)
+        if reason in ("MACRO_FILTER", "JEV_VETO") and current_price > 0:
+            self._add_shadow_trade(symbol, reason, details.get("setup", ""), side, current_price, current_atr)
         return None
 
     def _evaluate_signal(self, symbol: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1176,7 +1180,7 @@ class AutonomousMultiAssetTrader:
             if macro_trend == "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_LONG", "macro_trend": macro_trend,
-                })
+                }, current_price=price, current_atr=atr_14, side="BUY")
             if not session_breakout_allowed:
                 return self._skip_eval(symbol, "SKIPPED", "SESSION_GATE", {
                     "setup": "SNIPER_LONG",
@@ -1200,11 +1204,10 @@ class AutonomousMultiAssetTrader:
                 "regime": "MOMENTUM_EXPANSION"
             })
             if not jev_verdict.get("approved", False):
-                self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
                     "setup": "SNIPER_LONG", "side": "BUY",
                     "jev_verdict": jev_verdict,
-                })
-                return None
+                }, current_price=price, current_atr=atr_14, side="BUY")
 
             conv = min(98.0, 78.0 + hurst * 18.0 + robust_z * 3.5 + min(5.0, (rvol - 1.0) * 3.0))
             if conv < 82.0:
@@ -1252,7 +1255,7 @@ class AutonomousMultiAssetTrader:
             if macro_trend != "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_SHORT", "macro_trend": macro_trend,
-                })
+                }, current_price=price, current_atr=atr_14, side="SELL")
             if not session_breakout_allowed:
                 return self._skip_eval(symbol, "SKIPPED", "SESSION_GATE", {
                     "setup": "SNIPER_SHORT",
@@ -1276,11 +1279,10 @@ class AutonomousMultiAssetTrader:
                 "regime": "MOMENTUM_EXPANSION"
             })
             if not jev_verdict.get("approved", False):
-                self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
                     "setup": "SNIPER_SHORT", "side": "SELL",
                     "jev_verdict": jev_verdict,
-                })
-                return None
+                }, current_price=price, current_atr=atr_14, side="SELL")
 
             conv = min(98.0, 78.0 + hurst * 18.0 + abs(robust_z) * 3.5 + min(5.0, (rvol - 1.0) * 3.0))
             if conv < 82.0:
@@ -1329,8 +1331,8 @@ class AutonomousMultiAssetTrader:
             if robust_z <= -2.00 and rsi_14 <= 28:
                 if macro_trend == "BEARISH":
                     return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
-                        "setup": "ELASTIC_MEAN_REV_LONG", "macro_trend": macro_trend,
-                    })
+                    "setup": "ELASTIC_MEAN_REV_LONG", "macro_trend": macro_trend,
+                }, current_price=price, current_atr=atr_14, side="BUY")
                 if "SELLING" in order_flow_bias and divergence == "BEARISH_EXPANSION":
                     return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
                         "setup": "ELASTIC_MEAN_REV_LONG", "order_flow_bias": order_flow_bias,
@@ -1350,11 +1352,10 @@ class AutonomousMultiAssetTrader:
                     "regime": "ELASTIC_STRETCH"
                 })
                 if not jev_verdict.get("approved", False):
-                    self._log_decision(symbol, "REJECTED", "JEV_VETO", {
-                        "setup": "ELASTIC_MEAN_REV_LONG", "side": "BUY",
-                        "jev_verdict": jev_verdict,
-                    })
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
+                    "setup": "ELASTIC_MEAN_REV_LONG", "side": "BUY",
+                    "jev_verdict": jev_verdict,
+                }, current_price=price, current_atr=atr_14, side="BUY")
 
                 conv = min(95.0, 75.0 + abs(robust_z) * 5.0)
                 if conv < 82.0:
@@ -1401,8 +1402,8 @@ class AutonomousMultiAssetTrader:
             elif robust_z >= 2.00 and rsi_14 >= 72:
                 if macro_trend != "BEARISH":
                     return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
-                        "setup": "ELASTIC_MEAN_REV_SHORT", "macro_trend": macro_trend,
-                    })
+                    "setup": "ELASTIC_MEAN_REV_SHORT", "macro_trend": macro_trend,
+                }, current_price=price, current_atr=atr_14, side="SELL")
                 if "BUYING" in order_flow_bias and divergence == "BULLISH_EXPANSION":
                     return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
                         "setup": "ELASTIC_MEAN_REV_SHORT", "order_flow_bias": order_flow_bias,
@@ -1422,11 +1423,10 @@ class AutonomousMultiAssetTrader:
                     "regime": "ELASTIC_STRETCH"
                 })
                 if not jev_verdict.get("approved", False):
-                    self._log_decision(symbol, "REJECTED", "JEV_VETO", {
-                        "setup": "ELASTIC_MEAN_REV_SHORT", "side": "SELL",
-                        "jev_verdict": jev_verdict,
-                    })
-                    return None
+                    return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
+                    "setup": "ELASTIC_MEAN_REV_SHORT", "side": "SELL",
+                    "jev_verdict": jev_verdict,
+                }, current_price=price, current_atr=atr_14, side="SELL")
 
                 conv = min(95.0, 75.0 + abs(robust_z) * 5.0)
                 if conv < 82.0:
@@ -1797,6 +1797,107 @@ class AutonomousMultiAssetTrader:
                 return None
             pos["_closing"] = True
             return pos
+
+
+    def _add_shadow_trade(self, symbol: str, reason: str, setup: str, side: str, entry_price: float, atr: float):
+        try:
+            if side == "BUY":
+                sl = entry_price - (atr * 1.5)
+                tp1 = entry_price + (atr * 1.0)
+                tp2 = entry_price + (atr * 2.5)
+            else:
+                sl = entry_price + (atr * 1.5)
+                tp1 = entry_price - (atr * 1.0)
+                tp2 = entry_price - (atr * 2.5)
+                
+            self.shadow_trades.append({
+                "id": f"shadow_{int(time.time()*1000)}",
+                "symbol": symbol,
+                "reason": reason,
+                "setup": setup,
+                "side": side,
+                "entry_price": entry_price,
+                "sl": sl,
+                "tp1": tp1,
+                "tp2": tp2,
+                "ts_epoch": time.time(),
+                "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+                "status": "OPEN",
+                "tp1_hit": False,
+            })
+        except Exception as e:
+            logger.error(f"[SHADOW] Error adding shadow trade: {e}")
+
+    def _manage_shadow_trades(self):
+        try:
+            now = time.time()
+            active_shadows = []
+            for trade in self.shadow_trades:
+                symbol = trade["symbol"]
+                if symbol not in self._price_cache:
+                    active_shadows.append(trade)
+                    continue
+                
+                current_price = self._price_cache[symbol]["price"]
+                side = trade["side"]
+                
+                # Check 2-hour expiration
+                if now - trade["ts_epoch"] > 7200:
+                    trade["status"] = "EXPIRED"
+                    trade["exit_price"] = current_price
+                    self._log_shadow_pnl(trade)
+                    continue
+                
+                # Exit logic mirroring real logic
+                hit_sl = (side == "BUY" and current_price <= trade["sl"]) or (side == "SELL" and current_price >= trade["sl"])
+                hit_tp1 = (side == "BUY" and current_price >= trade["tp1"]) or (side == "SELL" and current_price <= trade["tp1"])
+                hit_tp2 = (side == "BUY" and current_price >= trade["tp2"]) or (side == "SELL" and current_price <= trade["tp2"])
+                
+                if hit_sl:
+                    trade["status"] = "SL_HIT"
+                    trade["exit_price"] = trade["sl"]
+                    self._log_shadow_pnl(trade)
+                    continue
+                
+                if hit_tp2:
+                    trade["status"] = "TP2_HIT"
+                    trade["exit_price"] = trade["tp2"]
+                    self._log_shadow_pnl(trade)
+                    continue
+                    
+                if hit_tp1 and not trade["tp1_hit"]:
+                    trade["tp1_hit"] = True
+                    # Move SL to BE + 0.1%
+                    if side == "BUY":
+                        trade["sl"] = trade["entry_price"] * 1.001
+                    else:
+                        trade["sl"] = trade["entry_price"] * 0.999
+                        
+                active_shadows.append(trade)
+                
+            self.shadow_trades = active_shadows
+        except Exception as e:
+            logger.error(f"[SHADOW] Error managing shadow trades: {e}")
+            
+    def _log_shadow_pnl(self, trade: Dict[str, Any]):
+        try:
+            side = trade["side"]
+            entry = trade["entry_price"]
+            exit = trade["exit_price"]
+            
+            # Simple % pnl calculation, real logic uses actual sizes and fees
+            if side == "BUY":
+                pct = (exit - entry) / entry
+            else:
+                pct = (entry - exit) / entry
+                
+            trade["pnl_pct"] = pct
+            trade["exit_ts_utc"] = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+            
+            with open(self.shadow_pnl_ledger_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(trade) + "\n")
+        except Exception as e:
+            logger.error(f"[SHADOW] Error logging shadow pnl: {e}")
 
     def _manage_open_positions(self):
         symbols_to_close = []
@@ -2429,6 +2530,10 @@ class AutonomousMultiAssetTrader:
                 # Positions are created ONLY on real post-placement fills.
                 if self.pending_entries:
                     self._poll_pending_entries()
+                    
+                # 3. Manage Shadow Trades
+                if self.shadow_trades:
+                    self._manage_shadow_trades()
 
                 # 2c. Price-feed health: sustained total data failure means
                 # stops are being evaluated on stale/absent data. Alert once.
