@@ -1114,10 +1114,10 @@ class AutonomousMultiAssetTrader:
         # Compute Relative Volume (RVOL) to confirm institutional volume support
         volumes = data.get("volumes", [])
         rvol = 1.0
-        if len(volumes) >= 21:
-            avg_vol_20 = sum(volumes[-21:-1]) / 20.0
+        if len(volumes) >= 22:
+            avg_vol_20 = sum(volumes[-22:-2]) / 20.0
             if avg_vol_20 > 0:
-                rvol = round(volumes[-1] / avg_vol_20, 2)
+                rvol = round(volumes[-2] / avg_vol_20, 2)
 
         # 4. Order Flow (CVD) and Order Book (OBI) Telemetry
         order_flow = self.order_flow_engine.get_order_flow_metrics(symbol=symbol)
