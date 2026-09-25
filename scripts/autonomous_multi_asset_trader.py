@@ -1711,7 +1711,14 @@ class AutonomousMultiAssetTrader:
             "jev_trap_risk": signal.get("jev_trap_risk", 0.15),
             "jev_engine_mode": signal.get("jev_engine_mode", "unknown"),
             "mode": self.execution_adapter.mode.upper(),
-            "unrealized_pnl_usd": 0.0
+            "unrealized_pnl_usd": 0.0,
+            # Trade telemetry (per-trade history): peak/trough unrealized PnL
+            # and a 5-minute mark trail, persisted into the closed trade
+            # record. Telemetry-only — never influences entries or exits.
+            "peak_upnl_usd": 0.0,
+            "trough_upnl_usd": 0.0,
+            "last_progress_alert_ts": now,
+            "upnl_marks": [],
         }
 
         # Entry costs are realized the moment we pay them. LEDGER-FIRST: the
@@ -1828,6 +1835,40 @@ class AutonomousMultiAssetTrader:
             pos["current_price"] = cur_price
             pos["unrealized_pnl_usd"] = round(unrealized_pnl, 2)
             pos["unrealized_pnl_pct"] = round(pnl_pct * self.leverage, 2)
+
+            # 0. Trade telemetry: peak/trough tracking + 5-minute Telegram
+            #    progress update. Read-only w.r.t. trading decisions.
+            upnl_now = round(unrealized_pnl, 2)
+            if upnl_now > float(pos.get("peak_upnl_usd", 0.0)):
+                pos["peak_upnl_usd"] = upnl_now
+            if upnl_now < float(pos.get("trough_upnl_usd", 0.0)):
+                pos["trough_upnl_usd"] = upnl_now
+            if now - float(pos.get("last_progress_alert_ts", 0.0)) >= 300:
+                pos["last_progress_alert_ts"] = now
+                pos.setdefault("upnl_marks", []).append({
+                    "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(now)),
+                    "mark": round(cur_price, 6),
+                    "upnl_usd": upnl_now,
+                })
+                self._save_positions()
+                try:
+                    self.telegram_bot.notify_trade_progress(
+                        symbol=symbol,
+                        side=pos["side"],
+                        entry_price=entry_px,
+                        mark_price=cur_price,
+                        unrealized_pnl_usd=upnl_now,
+                        roe_pct=round(pnl_pct * self.leverage, 2),
+                        peak_upnl_usd=float(pos.get("peak_upnl_usd", 0.0)),
+                        open_time=float(pos.get("open_time", now)),
+                        tp1=float(pos.get("tp1", 0.0) or 0.0),
+                        tp2=float(pos.get("tp2", 0.0) or 0.0),
+                        stop_loss=float(pos.get("stop_loss", 0.0) or 0.0),
+                        tp1_hit=bool(pos.get("tp1_hit", False)),
+                        be_active=bool(pos.get("break_even_active", False)),
+                    )
+                except Exception as _tp_err:
+                    print(f"[QUANT VAULT] Telegram progress alert error: {_tp_err}")
 
             # 1. Early Break-Even Ratchet: Lock stop to entry + fee buffer at +1.0 ATR (+0.60% profit)
             if not pos.get("early_be_hit", False) and not pos.get("tp1_hit", False):
@@ -2089,7 +2130,12 @@ class AutonomousMultiAssetTrader:
                     "legs": legs,
                     "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
                     "mode": pos["mode"],
-                    "duration_sec": int(duration)
+                    "duration_sec": int(duration),
+                    # Per-trade history: max favorable/adverse excursion and
+                    # the 5-minute unrealized-PnL trail (telemetry).
+                    "mfe_usd": round(float(pos.get("peak_upnl_usd", 0.0)), 2),
+                    "mae_usd": round(float(pos.get("trough_upnl_usd", 0.0)), 2),
+                    "upnl_marks": pos.get("upnl_marks", []),
                 }
                 if not self._record_closed_trade(trade_record):
                     # The ledger already holds every leg of this close; the
@@ -2312,7 +2358,12 @@ class AutonomousMultiAssetTrader:
             "legs": legs,
             "closed_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
             "mode": pos.get("mode", "PAPER"),
-            "duration_sec": duration
+            "duration_sec": duration,
+            # Per-trade history: max favorable/adverse excursion and
+            # the 5-minute unrealized-PnL trail (telemetry).
+            "mfe_usd": round(float(pos.get("peak_upnl_usd", 0.0)), 2),
+            "mae_usd": round(float(pos.get("trough_upnl_usd", 0.0)), 2),
+            "upnl_marks": pos.get("upnl_marks", []),
         }
         history_persisted = self._record_closed_trade(rec)
         if not history_persisted:

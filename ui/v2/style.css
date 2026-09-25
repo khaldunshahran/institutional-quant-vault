@@ -250,3 +250,17 @@ canvas { width: 100%; display: block; }
   padding: 24px 20px 32px;
   border-top: 1px solid var(--border);
 }
+
+/* ---------- Trade history ---------- */
+.trade-row { cursor: pointer; }
+.trade-row:hover td { background: rgba(255, 255, 255, 0.03); }
+.expand-hint { color: var(--secondary); }
+.trade-detail { padding: 12px 8px; }
+.trade-detail .kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 24px;
+  margin-bottom: 12px;
+}
+.table-nested { margin: 0 0 8px 0; font-size: 12px; }
+.trade-detail-row td { background: rgba(255, 255, 255, 0.015); }

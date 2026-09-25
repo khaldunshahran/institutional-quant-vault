@@ -128,12 +128,6 @@ async function refreshHeader() {
   if (!s) return;
   state.status = s;
 
-  const invBadge = document.getElementById("inverted-badge");
-  if (invBadge) {
-    invBadge.style.display = s.invert_signals ? "inline-block" : "none";
-  }
-
-
   const eq = (s.equity_usd !== undefined && s.equity_usd !== null)
     ? s.equity_usd
     : (state.overview ? state.overview.equity_usd : null);
@@ -436,6 +430,7 @@ async function refreshPositions() {
   state.status = s;
   renderPositions(s);
   setUpdated("updated-positions");
+  await refreshTradeHistory();
 
   // pending entries from integrity
   const integ = state.integrity || await getJSON("/api/v2/integrity");
@@ -454,6 +449,115 @@ async function refreshPositions() {
 }
 
 /* ---------------- market ---------------- */
+
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(Number(sec) || 0));
+  if (sec < 60) return sec + "s";
+  const m = Math.floor(sec / 60);
+  if (m < 60) return m + "m " + (sec % 60) + "s";
+  return Math.floor(m / 60) + "h " + (m % 60) + "m";
+}
+
+function fmtUtcShort(s) {
+  const d = parseUtc(s);
+  if (isNaN(d)) return esc(s || "—");
+  const p = n => String(n).padStart(2, "0");
+  return p(d.getUTCDate()) + "/" + p(d.getUTCMonth() + 1) + " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+}
+
+async function refreshTradeHistory() {
+  let hist = null;
+  try { hist = await getJSON("/api/autotrade/history"); } catch (e) { return; }
+  if (!hist) return;
+  renderTradeHistory(hist.closed_trades || []);
+  setUpdated("updated-trade-history");
+}
+
+function tradeDetailHtml(t) {
+  const legs = t.legs || [];
+  let html = '<div class="trade-detail">';
+  html += '<div class="kv-grid">';
+  html += "<div class=\"kv\"><span>Trade ID</span><span>" + esc(t.trade_id || "—") + "</span></div>";
+  html += "<div class=\"kv\"><span>Mode</span><span>" + esc(t.mode || "—") + "</span></div>";
+  html += "<div class=\"kv\"><span>Max favorable (peak)</span><span class=\"" + signClass(t.mfe_usd) + "\">" + usd(t.mfe_usd) + "</span></div>";
+  html += "<div class=\"kv\"><span>Max adverse</span><span class=\"" + signClass(t.mae_usd) + "\">" + usd(t.mae_usd) + "</span></div>";
+  html += "<div class=\"kv\"><span>Fees</span><span>" + usd(t.fees_usd) + "</span></div>";
+  html += "<div class=\"kv\"><span>Funding</span><span>" + usd(t.funding_usd) + "</span></div>";
+  html += "</div>";
+
+  if (legs.length) {
+    html += "<table class=\"table table-nested\"><thead><tr><th>Leg</th><th>Side</th><th class=\"num\">Qty</th>" +
+      "<th class=\"num\">Price</th><th class=\"num\">Fee</th><th class=\"num\">Realized PnL</th><th>Time</th></tr></thead><tbody>";
+    for (const l of legs) {
+      html += "<tr><td>" + esc(l.leg) + "</td><td>" + esc(l.side) + "</td>" +
+        '<td class="num">' + num(l.qty, 4) + "</td>" +
+        '<td class="num">' + num(l.price) + "</td>" +
+        '<td class="num">' + usd(l.fee_usd) + "</td>" +
+        '<td class="num ' + signClass(l.realized_pnl_usd) + '">' + usd(l.realized_pnl_usd) + "</td>" +
+        "<td>" + esc(l.ts_utc || "") + "</td></tr>";
+    }
+    html += "</tbody></table>";
+  } else {
+    html += '<p class="empty-row">No fill legs recorded for this trade.</p>';
+  }
+
+  const marks = t.upnl_marks || [];
+  if (marks.length) {
+    const first = marks[0], last = marks[marks.length - 1];
+    html += '<p class="caption">5-min uPnL trail: ' + marks.length + " marks, " +
+      usd(first.upnl_usd) + " → " + usd(last.upnl_usd) + ".</p>";
+  } else {
+    html += '<p class="caption">No 5-minute trail recorded (trade predates telemetry).</p>';
+  }
+  html += "</div>";
+  return html;
+}
+
+function renderTradeHistory(trades) {
+  const tb = document.querySelector("#trade-history-table tbody");
+  const empty = document.getElementById("trade-history-empty");
+  const shown = trades.slice(0, 100);
+  if (!shown.length) {
+    tb.innerHTML = "";
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  tb.innerHTML = shown.map((t, i) => {
+    const pnl = Number(t.pnl_usd);
+    const peak = (t.mfe_usd !== undefined && t.mfe_usd !== null) ? Number(t.mfe_usd) : null;
+    return '<tr class="trade-row" data-i="' + i + '"><td>' + fmtUtcShort(t.closed_at) + "</td>" +
+      "<td><strong>" + esc(t.symbol) + "</strong></td>" +
+      "<td>" + esc(t.side) + "</td>" +
+      '<td class="num">' + num(t.entry_price) + "</td>" +
+      '<td class="num">' + num(t.exit_price) + "</td>" +
+      '<td class="num ' + signClass(pnl) + '">' + usd(pnl) + "</td>" +
+      '<td class="num ' + signClass(t.pnl_pct) + '">' + pct(t.pnl_pct, 1) + "</td>" +
+      "<td>" + esc(t.exit_reason) + "</td>" +
+      "<td>" + fmtDur(t.duration_sec) + "</td>" +
+      '<td class="num ' + signClass(peak) + '">' + (peak === null ? "—" : usd(peak)) + "</td>" +
+      '<td class="num"><span class="expand-hint">▸</span></td></tr>';
+  }).join("");
+
+  tb.querySelectorAll(".trade-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const next = row.nextElementSibling;
+      if (next && next.classList.contains("trade-detail-row")) {
+        next.remove();
+        row.querySelector(".expand-hint").textContent = "▸";
+        return;
+      }
+      tb.querySelectorAll(".trade-detail-row").forEach(r => r.remove());
+      tb.querySelectorAll(".expand-hint").forEach(h => h.textContent = "▸");
+      const t = shown[Number(row.dataset.i)];
+      const det = document.createElement("tr");
+      det.className = "trade-detail-row";
+      det.innerHTML = '<td colspan="11">' + tradeDetailHtml(t) + "</td>";
+      row.after(det);
+      row.querySelector(".expand-hint").textContent = "▾";
+    });
+  });
+}
 
 const INTERVAL_MS = { "15m": 15 * 60000, "1h": 3600000, "4h": 4 * 3600000 };
 

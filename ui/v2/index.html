@@ -12,7 +12,6 @@
 <header class="topbar">
   <div class="topbar-left">
     <span class="badge badge-paper" id="mode-badge">PAPER MODE</span>
-    <span class="badge" id="inverted-badge" style="display:none; background:#ff4444; color:#fff; border-color:#cc0000; margin-left: 8px;">INVERTED</span>
     <span class="brand">Quant Terminal</span>
     <a href="/" class="btn btn-ghost" style="text-decoration:none;font-size:11px;padding:3px 10px;margin-left:8px;" title="Switch to Classic Cockpit">Classic Cockpit</a>
   </div>
@@ -113,6 +112,23 @@
     <div class="card">
       <div class="card-head"><h2>Pending entries</h2></div>
       <div class="chips" id="pending-chips"><span class="empty-row">Loading…</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Trade history</h2>
+        <span class="updated" id="updated-trade-history">—</span>
+      </div>
+      <table class="table" id="trade-history-table">
+        <thead><tr>
+          <th>Closed</th><th>Symbol</th><th>Side</th><th class="num">Entry</th>
+          <th class="num">Exit</th><th class="num">Net PnL</th><th class="num">ROE</th>
+          <th>Exit reason</th><th>Duration</th><th class="num">Peak</th><th></th>
+        </tr></thead>
+        <tbody><tr><td colspan="11" class="empty-row">Loading…</td></tr></tbody>
+      </table>
+      <p class="empty" id="trade-history-empty" hidden>No closed trades yet.</p>
+      <p class="caption">Click a row for full trade detail: every fill leg, max favorable / adverse excursion, and the 5-minute unrealized-PnL trail.</p>
     </div>
   </section>
 

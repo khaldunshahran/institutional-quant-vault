@@ -162,13 +162,8 @@ class TelegramAlertBot:
         try:
             items = []
             if self.outbox_path.exists():
-                try:
-                    with open(self.outbox_path, "r", encoding="utf-8") as f:
-                        loaded = json.load(f)
-                        if isinstance(loaded, list):
-                            items = loaded
-                except Exception:
-                    items = []
+                with open(self.outbox_path, "r", encoding="utf-8") as f:
+                    items = json.load(f)
             items.insert(0, record)
             if len(items) > 60:
                 items = items[:60]
@@ -257,6 +252,53 @@ class TelegramAlertBot:
         )
         return self.send_message(text)
 
+    def notify_trade_progress(
+        self,
+        symbol: str,
+        side: str,
+        entry_price: float,
+        mark_price: float,
+        unrealized_pnl_usd: float,
+        roe_pct: float,
+        peak_upnl_usd: float,
+        open_time: float,
+        tp1: float = 0.0,
+        tp2: float = 0.0,
+        stop_loss: float = 0.0,
+        tp1_hit: bool = False,
+        be_active: bool = False,
+    ) -> Dict[str, Any]:
+        """Dispatches a 5-minute in-trade progress update (unrealized PnL, peak, levels)."""
+        mins = max(0, int((time.time() - open_time) / 60))
+        dur_str = f"{mins // 60}h {mins % 60}m" if mins >= 60 else f"{mins}m"
+        side_emoji = "🟢" if side in ("LONG", "BUY") else "🔴"
+        up_emoji = "🟢" if unrealized_pnl_usd >= 0 else "🔴"
+        px_fmt = lambda p: f"${p:,.4f}" if p < 1.0 else f"${p:,.2f}"
+
+        sgn = 1 if side in ("LONG", "BUY") else -1
+        lvl_parts = []
+        if tp1 > 0:
+            d = sgn * (tp1 - entry_price) / entry_price * 100
+            lvl_parts.append(f"TP1 {px_fmt(tp1)} ({d:+.1f}%)")
+        if stop_loss > 0:
+            d = sgn * (stop_loss - entry_price) / entry_price * 100
+            lvl_parts.append(f"SL {px_fmt(stop_loss)} ({d:+.1f}%)")
+        lvl_str = " · ".join(lvl_parts) if lvl_parts else "—"
+
+        status = "🛡️ BE locked" if be_active else ("✅ TP1 banked" if tp1_hit else "⏳ running")
+
+        text = (
+            f"<b>{up_emoji} TRADE UPDATE: {side_emoji} {side} {symbol}</b> ({dur_str} in trade)\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Mark:</b> {px_fmt(mark_price)} (entry {px_fmt(entry_price)})\n"
+            f"• <b>Unrealized:</b> <b>{'+' if unrealized_pnl_usd >= 0 else ''}${unrealized_pnl_usd:,.2f}</b> "
+            f"({'+' if roe_pct >= 0 else ''}{roe_pct:.1f}% ROE)\n"
+            f"• <b>Peak this trade:</b> +${peak_upnl_usd:,.2f}\n"
+            f"• <b>Levels:</b> {lvl_str}\n"
+            f"• <b>Status:</b> {status}"
+        )
+        return self.send_message(text)
+
     def notify_trade_closed(
         self,
         symbol: str,
@@ -293,8 +335,7 @@ class TelegramAlertBot:
         dur_str = f"{duration_sec // 60}m {duration_sec % 60}s" if duration_sec > 0 else "< 1m"
         bar = make_progress_bar(daily_pnl, daily_target)
         pnl_sign = "+" if daily_pnl >= 0 else "-"
-        total_lifetime = wins + losses
-        wr = (wins / total_lifetime * 100.0) if total_lifetime > 0 else 0.0
+        wr = (wins / daily_trades * 100.0) if daily_trades > 0 else 0.0
 
         en_fmt = f"${entry_price:,.4f}" if entry_price < 1.0 else f"${entry_price:,.2f}"
         ex_fmt = f"${exit_price:,.4f}" if exit_price < 1.0 else f"${exit_price:,.2f}"
@@ -331,8 +372,7 @@ class TelegramAlertBot:
         wins = int(state.get("wins", 0))
         losses = int(state.get("losses", 0))
         trades_count = int(state.get("daily_trades_count", wins + losses))
-        total_lifetime = wins + losses
-        wr = (wins / total_lifetime * 100.0) if total_lifetime > 0 else 0.0
+        wr = (wins / trades_count * 100.0) if trades_count > 0 else 0.0
         positions = state.get("open_positions", [])
 
         # Run Quant Sentry Auditor for deep telemetry insights
@@ -373,7 +413,7 @@ class TelegramAlertBot:
             f"• <b>Total Net PnL:</b> {pnl_emoji} <b>{pnl_sign}${abs(daily_pnl):,.2f}</b>\n"
             f"• <b>Total Gains (Wins):</b> 🟢 <b>+${gross_gain:,.2f}</b> ({wins} winning trades)\n"
             f"• <b>Total Losses:</b> 🔴 <b>-${abs(gross_loss):,.2f}</b> ({losses} losing trades)\n"
-            f"• <b>Win Rate:</b> {wr:.1f}% ({total_lifetime} total closed){insights_str}\n\n"
+            f"• <b>Win Rate:</b> {wr:.1f}% ({trades_count} total closed){insights_str}\n\n"
             f"📊 <b>ACTIVE POSITIONS ({len(positions)}):</b>{pos_str}\n\n"
             f"⚙️ <i>Sentry Active • Send <code>/audit</code> for full research drill-down</i>"
         )
@@ -785,8 +825,7 @@ class TelegramAlertBot:
         trades_count = int(state.get("daily_trades_count", 0))
         wins = int(state.get("wins", 0))
         losses = int(state.get("losses", 0))
-        total_lifetime = wins + losses
-        wr = (wins / total_lifetime * 100.0) if total_lifetime > 0 else 0.0
+        wr = (wins / trades_count * 100.0) if trades_count > 0 else 0.0
 
         bar = make_progress_bar(pnl, target, length=10)
         pnl_sign = "+" if pnl >= 0 else "-"
