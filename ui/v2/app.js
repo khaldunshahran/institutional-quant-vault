@@ -461,8 +461,9 @@ function fmtDur(sec) {
 }
 
 function fmtUtcShort(s) {
-  const d = parseUtc(s);
-  if (isNaN(d)) return esc(s || "—");
+  const ms = parseUtc(s);
+  if (isNaN(ms)) return esc(s || "—");
+  const d = new Date(ms);
   const p = n => String(n).padStart(2, "0");
   return p(d.getUTCDate()) + "/" + p(d.getUTCMonth() + 1) + " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
 }

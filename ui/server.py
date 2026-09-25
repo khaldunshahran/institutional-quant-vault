@@ -1076,6 +1076,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        # Classic dashboard retired — the v2 Quant Terminal is the only UI.
+        if path in ("/", "/index.html", "/index.htm"):
+            self.send_response(302)
+            self.send_header("Location", "/v2/")
+            self.end_headers()
+            return
+
         if path == "/api/telemetry":
             self.send_json(CACHED_TELEMETRY)
         elif path == "/api/status":
