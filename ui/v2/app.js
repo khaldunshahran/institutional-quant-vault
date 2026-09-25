@@ -119,6 +119,8 @@ const state = {
   marketSymbol: null,
   marketInterval: "15m",
   candles: null,
+  allTrades: [],     // full closed-trade list (unfiltered)
+  tradeDateFilter: "", // "YYYY-MM-DD" or "" for all
 };
 
 /* ---------------- header ---------------- */
@@ -469,8 +471,48 @@ async function refreshTradeHistory() {
   let hist = null;
   try { hist = await getJSON("/api/autotrade/history"); } catch (e) { return; }
   if (!hist) return;
-  renderTradeHistory(hist.closed_trades || []);
+  state.allTrades = hist.closed_trades || [];
+  buildTradeDateFilter();
+  renderTradeHistory();
   setUpdated("updated-trade-history");
+}
+
+/* Group trades by UTC calendar date of close; newest date first. */
+function tradeDateKey(t) {
+  const ms = parseUtc(t.closed_at);
+  if (isNaN(ms)) return "";
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, "0");
+  return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate());
+}
+
+function buildTradeDateFilter() {
+  const sel = document.getElementById("trade-date-filter");
+  if (!sel) return;
+  const prev = state.tradeDateFilter;
+  const groups = new Map(); // date -> {count, pnl}
+  for (const t of state.allTrades) {
+    const k = tradeDateKey(t);
+    if (!k) continue;
+    if (!groups.has(k)) groups.set(k, { count: 0, pnl: 0 });
+    const g = groups.get(k);
+    g.count++;
+    g.pnl += Number(t.pnl_usd) || 0;
+  }
+  const dates = Array.from(groups.keys()).sort().reverse();
+  sel.innerHTML = '<option value="">All dates (' + state.allTrades.length + " trades)</option>" +
+    dates.map(k => {
+      const g = groups.get(k);
+      const label = k + " — " + g.count + " trades (" + usd(g.pnl) + ")";
+      return '<option value="' + k + '"' + (k === prev ? " selected" : "") + ">" + esc(label) + "</option>";
+    }).join("");
+  state.tradeDateFilter = dates.indexOf(prev) >= 0 ? prev : "";
+  sel.value = state.tradeDateFilter;
+}
+
+function filteredTrades() {
+  if (!state.tradeDateFilter) return state.allTrades;
+  return state.allTrades.filter(t => tradeDateKey(t) === state.tradeDateFilter);
 }
 
 function tradeDetailHtml(t) {
@@ -509,13 +551,97 @@ function tradeDetailHtml(t) {
   } else {
     html += '<p class="caption">No 5-minute trail recorded (trade predates telemetry).</p>';
   }
+
+  // Per-trade price chart: entry → exit
+  const chartId = "trade-chart-" + String(t.trade_id || Math.random().toString(36).slice(2)).replace(/[^a-zA-Z0-9_-]/g, "");
+  html += '<div class="trade-chart-wrap">' +
+    '<button class="btn btn-ghost trade-chart-btn" data-chart="' + chartId + '">Load price chart (entry → exit)</button>' +
+    '<div class="trade-chart-status" id="' + chartId + '-status"></div>' +
+    '<canvas class="trade-chart" id="' + chartId + '" height="300" style="display:none"></canvas>' +
+    "</div>";
   html += "</div>";
   return html;
 }
 
-function renderTradeHistory(trades) {
+/* Pick a kline interval that keeps the trade window under ~200 candles. */
+function tradeChartInterval(durSec) {
+  if (durSec <= 3 * 3600) return "5m";
+  if (durSec <= 24 * 3600) return "15m";
+  if (durSec <= 7 * 24 * 3600) return "1h";
+  return "4h";
+}
+
+async function loadTradeChart(t, canvasId, btn, statusEl) {
+  const closeMs = parseUtc(t.closed_at);
+  const durSec = Number(t.duration_sec) || 0;
+  if (isNaN(closeMs) || !durSec) {
+    statusEl.textContent = "Cannot chart: missing timestamps.";
+    return;
+  }
+  const openMs = closeMs - durSec * 1000;
+  const padMs = Math.max(durSec * 1000 * 0.15, 3 * 60 * 1000);
+  const interval = tradeChartInterval(durSec);
+  const start = Math.floor(openMs - padMs);
+  const end = Math.ceil(closeMs + padMs);
+  btn.disabled = true;
+  btn.textContent = "Loading chart…";
+  statusEl.textContent = "";
+  try {
+    const data = await getJSON("/api/jev/klines?symbol=" + encodeURIComponent(t.symbol) +
+      "&interval=" + interval + "&limit=1000&start=" + start + "&end=" + end);
+    const candles = (data && data.candles) || [];
+    if (candles.length < 2) {
+      statusEl.textContent = "No price data available for this window.";
+      btn.disabled = false;
+      btn.textContent = "Retry price chart";
+      return;
+    }
+    // Entry marker: first candle at/after open; exit marker: last candle at/before close.
+    let entryIdx = 0, exitIdx = candles.length - 1;
+    for (let i = 0; i < candles.length; i++) {
+      if (candles[i].time >= openMs) { entryIdx = i; break; }
+    }
+    for (let i = candles.length - 1; i >= 0; i--) {
+      if (candles[i].time <= closeMs) { exitIdx = i; break; }
+    }
+    const pnl = Number(t.pnl_usd) || 0;
+    const markers = [
+      { index: entryIdx, price: Number(t.entry_price), kind: "entry", side: t.side },
+      { index: exitIdx, price: Number(t.exit_price), kind: "exit", pnl: pnl },
+    ];
+    const levels = [
+      { price: Number(t.entry_price), label: "Entry", color: C.accent, dash: [5, 4] },
+      { price: Number(t.exit_price), label: "Exit", color: pnl >= 0 ? C.profit : C.loss, dash: [5, 4] },
+    ];
+    const canvas = document.getElementById(canvasId);
+    drawCandleChart(candles, markers, levels, canvas, null);
+    const d = new Date(openMs), e = new Date(closeMs);
+    statusEl.textContent = t.symbol + " " + interval + " — " +
+      d.toISOString().slice(0, 16).replace("T", " ") + " → " +
+      e.toISOString().slice(0, 16).replace("T", " ") + " UTC (" + candles.length + " candles)";
+    btn.style.display = "none";
+  } catch (err) {
+    statusEl.textContent = "Chart failed to load.";
+    btn.disabled = false;
+    btn.textContent = "Retry price chart";
+  }
+}
+
+function renderTradeHistory() {
+  const trades = filteredTrades();
   const tb = document.querySelector("#trade-history-table tbody");
   const empty = document.getElementById("trade-history-empty");
+  const dayPnl = document.getElementById("trade-day-pnl");
+  // Day total (only meaningful when a single date is selected)
+  if (dayPnl) {
+    if (state.tradeDateFilter && trades.length) {
+      const tot = trades.reduce((s, t) => s + (Number(t.pnl_usd) || 0), 0);
+      dayPnl.textContent = "Day P&L: " + usd(tot);
+      dayPnl.className = "day-pnl " + signClass(tot);
+    } else {
+      dayPnl.textContent = "";
+    }
+  }
   const shown = trades.slice(0, 100);
   if (!shown.length) {
     tb.innerHTML = "";
@@ -555,6 +681,14 @@ function renderTradeHistory(trades) {
       det.innerHTML = '<td colspan="11">' + tradeDetailHtml(t) + "</td>";
       row.after(det);
       row.querySelector(".expand-hint").textContent = "▾";
+      const chartBtn = det.querySelector(".trade-chart-btn");
+      if (chartBtn) {
+        chartBtn.addEventListener("click", ev => {
+          ev.stopPropagation();
+          const cid = chartBtn.dataset.chart;
+          loadTradeChart(t, cid, chartBtn, document.getElementById(cid + "-status"));
+        });
+      }
     });
   });
 }
@@ -580,23 +714,28 @@ document.getElementById("market-symbol").addEventListener("change", e => {
   state.marketSymbol = e.target.value;
   refreshMarket(true);
 });
+document.getElementById("trade-date-filter").addEventListener("change", e => {
+  state.tradeDateFilter = e.target.value;
+  renderTradeHistory();
+});
 document.getElementById("market-interval").addEventListener("change", e => {
   state.marketInterval = e.target.value;
   refreshMarket(true);
 });
 
-function drawCandleChart(candles, markers, levels) {
-  const canvas = document.getElementById("candle-chart");
+function drawCandleChart(candles, markers, levels, canvas, emptyEl) {
+  canvas = canvas || document.getElementById("candle-chart");
+  emptyEl = emptyEl || document.getElementById("market-empty");
   const { ctx, w, h } = fitCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
-  const empty = document.getElementById("market-empty");
+  const empty = emptyEl;
   if (!candles || candles.length < 2) {
     canvas.style.display = "none";
-    empty.hidden = false;
+    if (empty) empty.hidden = false;
     return;
   }
   canvas.style.display = "block";
-  empty.hidden = true;
+  if (empty) empty.hidden = true;
 
   const padL = 10, padR = 64, padT = 12, padB = 30;
   const volH = Math.round((h - padT - padB) * 0.18);

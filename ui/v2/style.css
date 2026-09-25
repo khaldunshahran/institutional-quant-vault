@@ -218,6 +218,17 @@ select {
   cursor: pointer;
 }
 .btn-ghost { background: var(--elevated); color: var(--text); }
+
+/* ---------- Trade history: date filter + per-trade chart ---------- */
+.trade-filter-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px 0; font-size: 13px; color: var(--secondary);
+}
+.trade-filter-row label { font-weight: 600; }
+.day-pnl { font-weight: 600; }
+.trade-chart-wrap { margin-top: 12px; }
+.trade-chart { width: 100%; height: 300px; display: block; }
+.trade-chart-status { font-size: 12px; color: var(--secondary); margin-top: 6px; }
 .btn-ghost:hover { border-color: var(--accent); }
 .btn-danger { background: #2a1215; border-color: #5a2328; color: var(--loss); }
 .btn-danger:hover { border-color: var(--loss); }

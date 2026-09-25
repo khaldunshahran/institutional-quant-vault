@@ -1458,26 +1458,45 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.parse_qs(query_string)
         symbol = parsed.get("symbol", ["BTCUSDT"])[0].upper().replace("/", "").replace(" ", "")
         interval = parsed.get("interval", ["5m"])[0]
-        limit = min(100, max(10, int(parsed.get("limit", ["40"])[0])))
-        cache_key = f"{symbol}_{interval}_{limit}"
+        limit = min(1000, max(10, int(parsed.get("limit", ["40"])[0])))
+        # Optional historical window (epoch ms) for per-trade charts.
+        start_ms = parsed.get("start", [None])[0]
+        end_ms = parsed.get("end", [None])[0]
+        try:
+            start_ms = int(start_ms) if start_ms else None
+        except (TypeError, ValueError):
+            start_ms = None
+        try:
+            end_ms = int(end_ms) if end_ms else None
+        except (TypeError, ValueError):
+            end_ms = None
+        historical = start_ms is not None or end_ms is not None
+        cache_key = f"{symbol}_{interval}_{limit}_{start_ms}_{end_ms}"
         now = time.time()
+        # Historical windows are immutable — cache longer (10 min); live tail keeps 2s.
+        ttl = 600.0 if historical else 2.0
 
         if cache_key in GLOBAL_KLINE_CACHE:
             cached_ts, cached_candles = GLOBAL_KLINE_CACHE[cache_key]
-            if (now - cached_ts) < 2.0:
+            if (now - cached_ts) < ttl:
                 return {"status": "ok", "symbol": symbol, "interval": interval, "candles": cached_candles}
 
         # Select endpoints: XAUUSDT and futures use fapi.binance.com, spot uses api.binance.com
         urls_to_try = []
+        window_params = {}
+        if start_ms:
+            window_params["startTime"] = start_ms
+        if end_ms:
+            window_params["endTime"] = end_ms
         if symbol == "XAUUSDT":
             urls_to_try = [
-                ("https://fapi.binance.com/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit}),
-                ("https://api.binance.com/api/v3/klines", {"symbol": "PAXGUSDT", "interval": interval, "limit": limit}),
+                ("https://fapi.binance.com/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit, **window_params}),
+                ("https://api.binance.com/api/v3/klines", {"symbol": "PAXGUSDT", "interval": interval, "limit": limit, **window_params}),
             ]
         else:
             urls_to_try = [
-                ("https://api.binance.com/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit}),
-                ("https://fapi.binance.com/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit}),
+                ("https://api.binance.com/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit, **window_params}),
+                ("https://fapi.binance.com/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit, **window_params}),
             ]
 
         for url, params in urls_to_try:
