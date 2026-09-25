@@ -2081,10 +2081,14 @@ def run_server(port=5000):
     t_inst.start()
 
     ThreadingHTTPServer.allow_reuse_address = True
-    server = ThreadingHTTPServer(("127.0.0.1", port), DashboardHandler)
+    # Bind host is configurable for Tailscale deployments: QV_BIND_HOST=0.0.0.0
+    # exposes the dashboard on the tailnet (scope access with a firewall rule).
+    # Default stays localhost-only so existing local deployments don't change.
+    bind_host = os.environ.get("QV_BIND_HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((bind_host, port), DashboardHandler)
     print(f"\n=======================================================")
     print(f"  BTC 5M Polymarket Trading Cockpit Server Active")
-    print(f"  --> URL: http://localhost:{port}")
+    print(f"  --> URL: http://{bind_host}:{port}")
     print(f"=======================================================\n", flush=True)
     try:
         server.serve_forever()
