@@ -707,6 +707,7 @@ async function loadTradeChart(t, canvasId, btn, statusEl) {
     };
     const canvas = document.getElementById(canvasId);
     drawTradeSpark(candles, info, canvas);
+    canvas.style.display = "block";
     state.tradeCharts[t.trade_id] = true;
     const d = new Date(openMs), e = new Date(closeMs);
     statusEl.textContent = t.symbol + " " + interval + " — " +
