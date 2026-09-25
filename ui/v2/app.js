@@ -121,6 +121,9 @@ const state = {
   candles: null,
   allTrades: [],     // full closed-trade list (unfiltered)
   tradeDateFilter: "", // "YYYY-MM-DD" or "" for all
+  tradeSig: "",      // signature of last rendered trade list (skip no-op re-renders)
+  expandedTrades: {}, // trade_id -> true (expanded rows survive data refreshes)
+  tradeCharts: {},   // trade_id -> true (chart was loaded; reload after re-render)
 };
 
 /* ---------------- header ---------------- */
@@ -472,9 +475,16 @@ async function refreshTradeHistory() {
   let hist = null;
   try { hist = await getJSON("/api/autotrade/history"); } catch (e) { return; }
   if (!hist) return;
-  state.allTrades = hist.closed_trades || [];
-  buildTradeDateFilter();
-  renderTradeHistory();
+  const trades = hist.closed_trades || [];
+  state.allTrades = trades;
+  // The table only changes when a trade closes — skip re-render on quiet polls
+  // so an expanded row (or a loaded chart) is never wiped from under the user.
+  const sig = trades.length + "|" + trades.map(t => t.trade_id).join(",");
+  if (sig !== state.tradeSig) {
+    state.tradeSig = sig;
+    buildTradeDateFilter();
+    renderTradeHistory();
+  }
   setUpdated("updated-trade-history");
 }
 
@@ -556,14 +566,96 @@ function tradeDetailHtml(t) {
   // Per-trade price chart: entry → exit
   const chartId = "trade-chart-" + String(t.trade_id || Math.random().toString(36).slice(2)).replace(/[^a-zA-Z0-9_-]/g, "");
   html += '<div class="trade-chart-wrap">' +
-    '<button class="btn btn-ghost trade-chart-btn" data-chart="' + chartId + '">Load price chart (entry → exit)</button>' +
+    '<button class="btn btn-ghost trade-chart-btn" data-chart="' + chartId + '">Show price spark</button>' +
     '<div class="trade-chart-status" id="' + chartId + '-status"></div>' +
-    '<canvas class="trade-chart" id="' + chartId + '" height="300" style="display:none"></canvas>' +
+    '<canvas class="trade-chart" id="' + chartId + '" height="220" style="display:none"></canvas>' +
     "</div>";
   html += "</div>";
   return html;
 }
 
+/* Cute lite trade chart: soft area line of closes with entry/exit dots.
+   Replaces the heavy candlestick renderer for per-trade views. */
+function drawTradeSpark(candles, info, canvas) {
+  const fit = fitCanvas(canvas);
+  const ctx = fit.ctx, W = fit.w, H = fit.h;
+  if (!candles.length || !W || !H) return;
+  const closes = candles.map(c => Number(c.close));
+  const n = closes.length;
+  let lo = Math.min.apply(null, closes.concat([info.entryPrice, info.exitPrice]));
+  let hi = Math.max.apply(null, closes.concat([info.entryPrice, info.exitPrice]));
+  if (!(hi > lo)) hi = lo + 1;
+  const spanPad = (hi - lo) * 0.18;
+  lo -= spanPad; hi += spanPad;
+  const pL = 10, pR = 10, pT = 16, pB = 20;
+  const X = i => pL + (n === 1 ? 0.5 : i / (n - 1)) * (W - pL - pR);
+  const Y = v => pT + (1 - (v - lo) / (hi - lo)) * (H - pT - pB);
+
+  ctx.clearRect(0, 0, W, H);
+
+  // faint horizontal gridlines
+  ctx.strokeStyle = "rgba(148,163,184,0.14)";
+  ctx.lineWidth = 1;
+  for (let g = 0; g <= 3; g++) {
+    const y = pT + (g / 3) * (H - pT - pB);
+    ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W - pR, y); ctx.stroke();
+  }
+
+  const up = info.pnl >= 0;
+  const lineColor = up ? "#34d399" : "#f87171";
+
+  // soft area fill under the line
+  const grad = ctx.createLinearGradient(0, pT, 0, H - pB);
+  grad.addColorStop(0, up ? "rgba(52,211,153,0.30)" : "rgba(248,113,113,0.30)");
+  grad.addColorStop(1, "rgba(52,211,153,0)");
+  ctx.beginPath();
+  ctx.moveTo(X(0), Y(closes[0]));
+  for (let i = 1; i < n; i++) ctx.lineTo(X(i), Y(closes[i]));
+  ctx.lineTo(X(n - 1), H - pB);
+  ctx.lineTo(X(0), H - pB);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // smooth line through closes (midpoint quadratic smoothing)
+  ctx.beginPath();
+  ctx.moveTo(X(0), Y(closes[0]));
+  for (let i = 1; i < n - 1; i++) {
+    const xc = (X(i) + X(i + 1)) / 2, yc = (Y(closes[i]) + Y(closes[i + 1])) / 2;
+    ctx.quadraticCurveTo(X(i), Y(closes[i]), xc, yc);
+  }
+  if (n > 1) ctx.lineTo(X(n - 1), Y(closes[n - 1]));
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  // entry / exit markers: dashed level + dot + tiny label
+  const dot = (x, y, color, label) => {
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W - pR, y); ctx.stroke();
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(2,6,23,0.9)";
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = "600 10px system-ui, sans-serif";
+    const right = x > W - 70;
+    ctx.textAlign = right ? "right" : "left";
+    ctx.fillText(label, x + (right ? -9 : 9), y - 8);
+  };
+  dot(X(info.entryIdx), Y(info.entryPrice), "#38bdf8", "in " + num(info.entryPrice));
+  dot(X(info.exitIdx), Y(info.exitPrice), up ? "#34d399" : "#f87171", "out " + num(info.exitPrice));
+}
 /* Pick a kline interval that keeps the trade window under ~200 candles. */
 function tradeChartInterval(durSec) {
   if (durSec <= 3 * 3600) return "5m";
@@ -606,20 +698,20 @@ async function loadTradeChart(t, canvasId, btn, statusEl) {
       if (candles[i].time <= closeMs) { exitIdx = i; break; }
     }
     const pnl = Number(t.pnl_usd) || 0;
-    const markers = [
-      { index: entryIdx, price: Number(t.entry_price), kind: "entry", side: t.side },
-      { index: exitIdx, price: Number(t.exit_price), kind: "exit", pnl: pnl },
-    ];
-    const levels = [
-      { price: Number(t.entry_price), label: "Entry", color: C.accent, dash: [5, 4] },
-      { price: Number(t.exit_price), label: "Exit", color: pnl >= 0 ? C.profit : C.loss, dash: [5, 4] },
-    ];
+    const info = {
+      entryIdx: entryIdx,
+      exitIdx: exitIdx,
+      entryPrice: Number(t.entry_price),
+      exitPrice: Number(t.exit_price),
+      pnl: pnl,
+    };
     const canvas = document.getElementById(canvasId);
-    drawCandleChart(candles, markers, levels, canvas, null);
+    drawTradeSpark(candles, info, canvas);
+    state.tradeCharts[t.trade_id] = true;
     const d = new Date(openMs), e = new Date(closeMs);
     statusEl.textContent = t.symbol + " " + interval + " — " +
       d.toISOString().slice(0, 16).replace("T", " ") + " → " +
-      e.toISOString().slice(0, 16).replace("T", " ") + " UTC (" + candles.length + " candles)";
+      e.toISOString().slice(0, 16).replace("T", " ") + " UTC (" + candles.length + " points)";
     btn.style.display = "none";
   } catch (err) {
     statusEl.textContent = "Chart failed to load.";
@@ -667,31 +759,52 @@ function renderTradeHistory() {
   }).join("");
 
   tb.querySelectorAll(".trade-row").forEach(row => {
-    row.addEventListener("click", () => {
-      const next = row.nextElementSibling;
-      if (next && next.classList.contains("trade-detail-row")) {
-        next.remove();
-        row.querySelector(".expand-hint").textContent = "▸";
-        return;
-      }
-      tb.querySelectorAll(".trade-detail-row").forEach(r => r.remove());
-      tb.querySelectorAll(".expand-hint").forEach(h => h.textContent = "▸");
-      const t = shown[Number(row.dataset.i)];
-      const det = document.createElement("tr");
-      det.className = "trade-detail-row";
-      det.innerHTML = '<td colspan="11">' + tradeDetailHtml(t) + "</td>";
-      row.after(det);
-      row.querySelector(".expand-hint").textContent = "▾";
-      const chartBtn = det.querySelector(".trade-chart-btn");
-      if (chartBtn) {
-        chartBtn.addEventListener("click", ev => {
-          ev.stopPropagation();
-          const cid = chartBtn.dataset.chart;
-          loadTradeChart(t, cid, chartBtn, document.getElementById(cid + "-status"));
-        });
-      }
-    });
+    const t = shown[Number(row.dataset.i)];
+    row.addEventListener("click", () => toggleTradeRow(row, tb, shown));
+    // Restore an expansion that survived a data refresh.
+    if (t && state.expandedTrades[t.trade_id]) openTradeRow(row, t, tb, true);
   });
+}
+
+/* Only one trade detail open at a time; expansion survives data refreshes. */
+function openTradeRow(row, t, tb, restore) {
+  const det = document.createElement("tr");
+  det.className = "trade-detail-row";
+  det.innerHTML = '<td colspan="11">' + tradeDetailHtml(t) + "</td>";
+  row.after(det);
+  row.querySelector(".expand-hint").textContent = "▾";
+  row.classList.add("open");
+  state.expandedTrades[t.trade_id] = true;
+  const chartBtn = det.querySelector(".trade-chart-btn");
+  if (chartBtn) {
+    chartBtn.addEventListener("click", ev => {
+      ev.stopPropagation();
+      loadTradeChart(t, chartBtn.dataset.chart, chartBtn,
+        document.getElementById(chartBtn.dataset.chart + "-status"));
+    });
+    // After a refresh, silently reload a chart the user had already opened.
+    if (restore && state.tradeCharts[t.trade_id]) chartBtn.click();
+  }
+}
+
+function toggleTradeRow(row, tb, shown) {
+  const t = shown[Number(row.dataset.i)];
+  if (!t) return;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("trade-detail-row")) {
+    next.remove();
+    row.querySelector(".expand-hint").textContent = "▸";
+    row.classList.remove("open");
+    delete state.expandedTrades[t.trade_id];
+    return;
+  }
+  tb.querySelectorAll(".trade-detail-row").forEach(r => r.remove());
+  tb.querySelectorAll(".trade-row.open").forEach(r => {
+    r.classList.remove("open");
+    r.querySelector(".expand-hint").textContent = "▸";
+  });
+  state.expandedTrades = {};
+  openTradeRow(row, t, tb, false);
 }
 
 const INTERVAL_MS = { "15m": 15 * 60000, "1h": 3600000, "4h": 4 * 3600000 };
