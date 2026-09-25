@@ -13,7 +13,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SERVER_SCRIPT = PROJECT_ROOT / "ui" / "server.py"
-PORT = 5000
+# PORT can be overridden via environment (the inverted arm's .bat sets PORT=5001).
+PORT = int(os.environ.get("PORT", "5000"))
 URL = f"http://127.0.0.1:{PORT}"
 
 
