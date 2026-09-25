@@ -115,6 +115,12 @@ class AutonomousMultiAssetTrader:
     ):
         self.auto_start = auto_start
         self.freeze_universe = freeze_universe
+        # Paired-experiment signal inversion (Sep 2026): when QV_INVERT_SIGNALS
+        # is truthy, every JEV-APPROVED signal has its side flipped (BUY<->SELL)
+        # before order creation. The JEV evaluation itself always runs on the
+        # original direction — we test "the engine's approved signals, flipped".
+        # Paper-only; the hard LIVE lock is unaffected.
+        self.invert_signals = os.environ.get("QV_INVERT_SIGNALS", "").strip().lower() in ("1", "true", "yes", "on")
         # Frozen experiment universe: GOLD first, then TOP_50, de-duplicated.
         # Fixed for the life of the process so forward results are
         # reproducible and attributable to the signal, not to rotation.
@@ -1215,7 +1221,8 @@ class AutonomousMultiAssetTrader:
             sig = {
                 "symbol": symbol,
                 "asset_label": asset_label,
-                "side": "BUY",
+                "side": self._signal_side("BUY"),
+                "signal_inverted": self.invert_signals,
                 "price": price,
                 "hurst": hurst,
                 "z_score": round(robust_z, 2),
@@ -1287,7 +1294,8 @@ class AutonomousMultiAssetTrader:
             sig = {
                 "symbol": symbol,
                 "asset_label": asset_label,
-                "side": "SELL",
+                "side": self._signal_side("SELL"),
+                "signal_inverted": self.invert_signals,
                 "price": price,
                 "hurst": hurst,
                 "z_score": round(robust_z, 2),
@@ -1357,7 +1365,8 @@ class AutonomousMultiAssetTrader:
                 sig = {
                     "symbol": symbol,
                     "asset_label": asset_label,
-                    "side": "BUY",
+                    "side": self._signal_side("BUY"),
+                    "signal_inverted": self.invert_signals,
                     "price": price,
                     "hurst": hurst,
                     "z_score": round(robust_z, 2),
@@ -1425,7 +1434,8 @@ class AutonomousMultiAssetTrader:
                 sig = {
                     "symbol": symbol,
                     "asset_label": asset_label,
-                    "side": "SELL",
+                    "side": self._signal_side("SELL"),
+                    "signal_inverted": self.invert_signals,
                     "price": price,
                     "hurst": hurst,
                     "z_score": round(robust_z, 2),
@@ -1632,6 +1642,17 @@ class AutonomousMultiAssetTrader:
             self.pending_entries.pop(symbol, None)
             return
         self._create_position(signal, side, qty, price, entry_fee_usd)
+
+    def _signal_side(self, base_side: str) -> str:
+        """Apply the experiment's signal inversion to an approved signal side.
+
+        BUY<->SELL flip happens here, after JEV approval. Everything downstream
+        (limit price side, stops, targets, position LONG/SHORT) follows
+        mechanically from the flipped side, so no other changes are needed.
+        """
+        if self.invert_signals:
+            return "SELL" if base_side == "BUY" else "BUY"
+        return base_side
 
     def _create_position(self, signal: Dict[str, Any], side: str, qty: float,
                          price: float, entry_fee_usd: float):
