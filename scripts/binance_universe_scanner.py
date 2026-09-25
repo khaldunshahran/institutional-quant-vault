@@ -29,6 +29,23 @@ TOP_20_SYMBOLS = [
     "LINKUSDT", "DOGEUSDT", "LTCUSDT", "XRPUSDT"
 ]
 
+# Expanded experiment universe (Sep 2026): the core 9 above plus 20 more
+# large-cap, high-liquidity majors. Still strictly large-cap — the Sep 20-21
+# burst post-mortem showed blacklisted low-caps caused ~91% of historical
+# losses, so low-cap wick-traps (FIL, INJ, NEAR, etc.) stay EXCLUDED.
+# Safety: the scanner skips any symbol missing from the live ticker map,
+# so a stale/delisted entry here is harmless (it is simply ignored).
+TOP_50_SYMBOLS = [
+    # core 9 (same as TOP_20_SYMBOLS)
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "AVAXUSDT",
+    "LINKUSDT", "DOGEUSDT", "LTCUSDT", "XRPUSDT",
+    # 20 additional liquid large-caps
+    "ADAUSDT", "TRXUSDT", "TONUSDT", "DOTUSDT", "ATOMUSDT",
+    "UNIUSDT", "ETCUSDT", "HBARUSDT", "VETUSDT", "ICPUSDT",
+    "SUIUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "POLUSDT",
+    "SEIUSDT", "JUPUSDT", "AAVEUSDT", "LDOUSDT", "STXUSDT",
+]
+
 
 class BinanceUniverseScanner:
     def __init__(self, min_volume_usd: float = 50_000_000.0, cache_ttl_sec: float = 15.0, include_movers: bool = False):

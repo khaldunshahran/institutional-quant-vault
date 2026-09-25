@@ -71,7 +71,7 @@ from scripts.telegram_alert_bot import TelegramAlertBot
 from scripts.binance_universe_scanner import (
     BinanceUniverseScanner,
     GOLD_SYMBOLS,
-    TOP_20_SYMBOLS,
+    TOP_50_SYMBOLS,
 )
 from scripts.episodic_memory_engine import EpisodicMemoryEngine
 from scripts.order_flow_engine import OrderFlowEngine
@@ -115,12 +115,13 @@ class AutonomousMultiAssetTrader:
     ):
         self.auto_start = auto_start
         self.freeze_universe = freeze_universe
-        self.invert_signals = str(os.environ.get("QV_INVERT_SIGNALS", "false")).lower() in ["true", "1"]
-        # Frozen experiment universe: GOLD first, then TOP_20, de-duplicated.
+        # Frozen experiment universe: GOLD first, then TOP_50, de-duplicated.
         # Fixed for the life of the process so forward results are
         # reproducible and attributable to the signal, not to rotation.
+        # (Sep 2026: widened from TOP_20's 9 symbols to TOP_50's 29 to raise
+        # trade frequency; low-cap wick-traps stay excluded.)
         self._frozen_universe: List[str] = list(dict.fromkeys(
-            list(GOLD_SYMBOLS) + list(TOP_20_SYMBOLS)))
+            list(GOLD_SYMBOLS) + list(TOP_50_SYMBOLS)))
         self.max_concurrent_positions = max_concurrent_positions
         self.notional_per_trade_usd = notional_per_trade_usd
         self.leverage = leverage
@@ -146,8 +147,6 @@ class AutonomousMultiAssetTrader:
         # source of truth for money: daily PnL is derived from it, and each
         # closed trade's pnl_usd is the sum of its legs. Never rewritten.
         self.pnl_ledger_file = self.runtime_dir / "pnl_ledger.jsonl"
-        self.shadow_pnl_ledger_file = self.runtime_dir / "shadow_pnl_ledger.jsonl"
-        self.shadow_trades = []
 
         self.execution_adapter = BinanceExecutionAdapter()
         self.telegram_bot = TelegramAlertBot()
@@ -785,7 +784,6 @@ class AutonomousMultiAssetTrader:
 
         return {
             "running": self.is_running,
-            "invert_signals": getattr(self, "invert_signals", False),
             "thread_alive": bool(self.worker_thread is not None and self.worker_thread.is_alive()),
             "seconds_since_tick": round(time.time() - float(getattr(self, "_last_tick_ts", 0.0)), 1) if getattr(self, "_last_tick_ts", 0.0) else None,
             "price_fetch_failures": int(getattr(self, "_price_fetch_failures", 0)),
@@ -1059,13 +1057,11 @@ class AutonomousMultiAssetTrader:
 
         return self.macro_trend_cache.get("trend", "NEUTRAL_CHOP")
 
-    def _skip_eval(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None, current_price: float = 0.0, current_atr: float = 0.0, side: str = ""):
+    def _skip_eval(self, symbol: str, outcome: str, reason: str, details: Optional[Dict[str, Any]] = None):
         """Log a gate rejection/skip and return None. Every early exit from
         _evaluate_signal goes through here so the decision log has complete
         coverage — no silent rejections in the experiment record."""
         self._log_decision(symbol, outcome, reason, details)
-        if reason in ("MACRO_FILTER", "JEV_VETO") and current_price > 0:
-            self._add_shadow_trade(symbol, reason, details.get("setup", ""), side, current_price, current_atr)
         return None
 
     def _evaluate_signal(self, symbol: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1118,10 +1114,10 @@ class AutonomousMultiAssetTrader:
         # Compute Relative Volume (RVOL) to confirm institutional volume support
         volumes = data.get("volumes", [])
         rvol = 1.0
-        if len(volumes) >= 22:
-            avg_vol_20 = sum(volumes[-22:-2]) / 20.0
+        if len(volumes) >= 21:
+            avg_vol_20 = sum(volumes[-21:-1]) / 20.0
             if avg_vol_20 > 0:
-                rvol = round(volumes[-2] / avg_vol_20, 2)
+                rvol = round(volumes[-1] / avg_vol_20, 2)
 
         # 4. Order Flow (CVD) and Order Book (OBI) Telemetry
         order_flow = self.order_flow_engine.get_order_flow_metrics(symbol=symbol)
@@ -1180,7 +1176,7 @@ class AutonomousMultiAssetTrader:
             if macro_trend == "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_LONG", "macro_trend": macro_trend,
-                }, current_price=price, current_atr=atr_14, side="BUY")
+                })
             if not session_breakout_allowed:
                 return self._skip_eval(symbol, "SKIPPED", "SESSION_GATE", {
                     "setup": "SNIPER_LONG",
@@ -1204,10 +1200,11 @@ class AutonomousMultiAssetTrader:
                 "regime": "MOMENTUM_EXPANSION"
             })
             if not jev_verdict.get("approved", False):
-                return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
+                self._log_decision(symbol, "REJECTED", "JEV_VETO", {
                     "setup": "SNIPER_LONG", "side": "BUY",
                     "jev_verdict": jev_verdict,
-                }, current_price=price, current_atr=atr_14, side="BUY")
+                })
+                return None
 
             conv = min(98.0, 78.0 + hurst * 18.0 + robust_z * 3.5 + min(5.0, (rvol - 1.0) * 3.0))
             if conv < 82.0:
@@ -1245,17 +1242,13 @@ class AutonomousMultiAssetTrader:
                 "ev_usd": sig["ev_usd"],
                 "action": f"STRIKE CANDIDATE: LONG {symbol} @ ${price:,.2f} (SL: -{sl_pct*100:.2f}%, TP1: +{tp1_pct*100:.2f}%)"
             }
-            if getattr(self, "invert_signals", False):
-                sig["original_side"] = sig["side"]
-                sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
-                sig["signal_inverted"] = True
             return sig
 
         elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.35 and rsi_14 <= 48 and rvol >= 1.20:
             if macro_trend != "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_SHORT", "macro_trend": macro_trend,
-                }, current_price=price, current_atr=atr_14, side="SELL")
+                })
             if not session_breakout_allowed:
                 return self._skip_eval(symbol, "SKIPPED", "SESSION_GATE", {
                     "setup": "SNIPER_SHORT",
@@ -1279,10 +1272,11 @@ class AutonomousMultiAssetTrader:
                 "regime": "MOMENTUM_EXPANSION"
             })
             if not jev_verdict.get("approved", False):
-                return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
+                self._log_decision(symbol, "REJECTED", "JEV_VETO", {
                     "setup": "SNIPER_SHORT", "side": "SELL",
                     "jev_verdict": jev_verdict,
-                }, current_price=price, current_atr=atr_14, side="SELL")
+                })
+                return None
 
             conv = min(98.0, 78.0 + hurst * 18.0 + abs(robust_z) * 3.5 + min(5.0, (rvol - 1.0) * 3.0))
             if conv < 82.0:
@@ -1320,10 +1314,6 @@ class AutonomousMultiAssetTrader:
                 "ev_usd": sig["ev_usd"],
                 "action": f"STRIKE CANDIDATE: SHORT {symbol} @ ${price:,.2f} (SL: +{sl_pct*100:.2f}%, TP1: -{tp1_pct*100:.2f}%)"
             }
-            if getattr(self, "invert_signals", False):
-                sig["original_side"] = sig["side"]
-                sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
-                sig["signal_inverted"] = True
             return sig
 
         # 2. Deep Elastic Mean Reversion
@@ -1331,8 +1321,8 @@ class AutonomousMultiAssetTrader:
             if robust_z <= -2.00 and rsi_14 <= 28:
                 if macro_trend == "BEARISH":
                     return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
-                    "setup": "ELASTIC_MEAN_REV_LONG", "macro_trend": macro_trend,
-                }, current_price=price, current_atr=atr_14, side="BUY")
+                        "setup": "ELASTIC_MEAN_REV_LONG", "macro_trend": macro_trend,
+                    })
                 if "SELLING" in order_flow_bias and divergence == "BEARISH_EXPANSION":
                     return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
                         "setup": "ELASTIC_MEAN_REV_LONG", "order_flow_bias": order_flow_bias,
@@ -1352,10 +1342,11 @@ class AutonomousMultiAssetTrader:
                     "regime": "ELASTIC_STRETCH"
                 })
                 if not jev_verdict.get("approved", False):
-                    return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
-                    "setup": "ELASTIC_MEAN_REV_LONG", "side": "BUY",
-                    "jev_verdict": jev_verdict,
-                }, current_price=price, current_atr=atr_14, side="BUY")
+                    self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                        "setup": "ELASTIC_MEAN_REV_LONG", "side": "BUY",
+                        "jev_verdict": jev_verdict,
+                    })
+                    return None
 
                 conv = min(95.0, 75.0 + abs(robust_z) * 5.0)
                 if conv < 82.0:
@@ -1393,17 +1384,13 @@ class AutonomousMultiAssetTrader:
                     "ev_usd": sig["ev_usd"],
                     "action": f"STRIKE CANDIDATE: MEAN-REV LONG {symbol} @ ${price:,.2f}"
                 }
-                if getattr(self, "invert_signals", False):
-                    sig["original_side"] = sig["side"]
-                    sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
-                    sig["signal_inverted"] = True
                 return sig
 
             elif robust_z >= 2.00 and rsi_14 >= 72:
                 if macro_trend != "BEARISH":
                     return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
-                    "setup": "ELASTIC_MEAN_REV_SHORT", "macro_trend": macro_trend,
-                }, current_price=price, current_atr=atr_14, side="SELL")
+                        "setup": "ELASTIC_MEAN_REV_SHORT", "macro_trend": macro_trend,
+                    })
                 if "BUYING" in order_flow_bias and divergence == "BULLISH_EXPANSION":
                     return self._skip_eval(symbol, "REJECTED", "ORDER_FLOW_FILTER", {
                         "setup": "ELASTIC_MEAN_REV_SHORT", "order_flow_bias": order_flow_bias,
@@ -1423,10 +1410,11 @@ class AutonomousMultiAssetTrader:
                     "regime": "ELASTIC_STRETCH"
                 })
                 if not jev_verdict.get("approved", False):
-                    return self._skip_eval(symbol, "REJECTED", "JEV_VETO", {
-                    "setup": "ELASTIC_MEAN_REV_SHORT", "side": "SELL",
-                    "jev_verdict": jev_verdict,
-                }, current_price=price, current_atr=atr_14, side="SELL")
+                    self._log_decision(symbol, "REJECTED", "JEV_VETO", {
+                        "setup": "ELASTIC_MEAN_REV_SHORT", "side": "SELL",
+                        "jev_verdict": jev_verdict,
+                    })
+                    return None
 
                 conv = min(95.0, 75.0 + abs(robust_z) * 5.0)
                 if conv < 82.0:
@@ -1464,10 +1452,6 @@ class AutonomousMultiAssetTrader:
                     "ev_usd": sig["ev_usd"],
                     "action": f"STRIKE CANDIDATE: MEAN-REV SHORT {symbol} @ ${price:,.2f}"
                 }
-                if getattr(self, "invert_signals", False):
-                    sig["original_side"] = sig["side"]
-                    sig["side"] = "SELL" if sig["side"] == "BUY" else "BUY"
-                    sig["signal_inverted"] = True
                 return sig
 
         self._log_decision(symbol, "REJECTED", "NO_SETUP_MATCHED", {
@@ -1709,10 +1693,6 @@ class AutonomousMultiAssetTrader:
             "unrealized_pnl_usd": 0.0
         }
 
-        if signal.get("signal_inverted"):
-            position["signal_inverted"] = True
-            position["original_side"] = signal.get("original_side")
-
         # Entry costs are realized the moment we pay them. LEDGER-FIRST: the
         # ENTRY event must be durably recorded BEFORE the position enters
         # the book — a position with no ENTRY event would corrupt every
@@ -1738,7 +1718,7 @@ class AutonomousMultiAssetTrader:
         self.open_positions[symbol] = position
         self._save_positions()
 
-        log_payload = {
+        self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", {
             "setup": position.get("setup"),
             "side": position.get("side"),
             "entry_price": price,
@@ -1750,11 +1730,8 @@ class AutonomousMultiAssetTrader:
             "jev_trap_risk": position.get("jev_trap_risk"),
             "hurst": position.get("hurst"),
             "robust_z": position.get("robust_z"),
-        }
-        if position.get("signal_inverted"):
-            log_payload["signal_inverted"] = True
-            log_payload["original_side"] = position.get("original_side")
-        self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", log_payload)
+            "rvol": position.get("rvol"),
+        })
 
         thought = f"[{time.strftime('%H:%M:%S UTC')}] ⚡ STRIKE: {position['side']} {symbol} @ ${price:,.2f} | Size: ${position['notional_usd']:,.0f} (Margin: ${position['margin_collateral_usd']:,.0f}) | TP1: ${tp1:,.2f} (BE Armed)"
         self._add_thought(thought)
@@ -1797,107 +1774,6 @@ class AutonomousMultiAssetTrader:
                 return None
             pos["_closing"] = True
             return pos
-
-
-    def _add_shadow_trade(self, symbol: str, reason: str, setup: str, side: str, entry_price: float, atr: float):
-        try:
-            if side == "BUY":
-                sl = entry_price - (atr * 1.5)
-                tp1 = entry_price + (atr * 1.0)
-                tp2 = entry_price + (atr * 2.5)
-            else:
-                sl = entry_price + (atr * 1.5)
-                tp1 = entry_price - (atr * 1.0)
-                tp2 = entry_price - (atr * 2.5)
-                
-            self.shadow_trades.append({
-                "id": f"shadow_{int(time.time()*1000)}",
-                "symbol": symbol,
-                "reason": reason,
-                "setup": setup,
-                "side": side,
-                "entry_price": entry_price,
-                "sl": sl,
-                "tp1": tp1,
-                "tp2": tp2,
-                "ts_epoch": time.time(),
-                "ts_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
-                "status": "OPEN",
-                "tp1_hit": False,
-            })
-        except Exception as e:
-            logger.error(f"[SHADOW] Error adding shadow trade: {e}")
-
-    def _manage_shadow_trades(self):
-        try:
-            now = time.time()
-            active_shadows = []
-            for trade in self.shadow_trades:
-                symbol = trade["symbol"]
-                if symbol not in self._price_cache:
-                    active_shadows.append(trade)
-                    continue
-                
-                current_price = self._price_cache[symbol]["price"]
-                side = trade["side"]
-                
-                # Check 2-hour expiration
-                if now - trade["ts_epoch"] > 7200:
-                    trade["status"] = "EXPIRED"
-                    trade["exit_price"] = current_price
-                    self._log_shadow_pnl(trade)
-                    continue
-                
-                # Exit logic mirroring real logic
-                hit_sl = (side == "BUY" and current_price <= trade["sl"]) or (side == "SELL" and current_price >= trade["sl"])
-                hit_tp1 = (side == "BUY" and current_price >= trade["tp1"]) or (side == "SELL" and current_price <= trade["tp1"])
-                hit_tp2 = (side == "BUY" and current_price >= trade["tp2"]) or (side == "SELL" and current_price <= trade["tp2"])
-                
-                if hit_sl:
-                    trade["status"] = "SL_HIT"
-                    trade["exit_price"] = trade["sl"]
-                    self._log_shadow_pnl(trade)
-                    continue
-                
-                if hit_tp2:
-                    trade["status"] = "TP2_HIT"
-                    trade["exit_price"] = trade["tp2"]
-                    self._log_shadow_pnl(trade)
-                    continue
-                    
-                if hit_tp1 and not trade["tp1_hit"]:
-                    trade["tp1_hit"] = True
-                    # Move SL to BE + 0.1%
-                    if side == "BUY":
-                        trade["sl"] = trade["entry_price"] * 1.001
-                    else:
-                        trade["sl"] = trade["entry_price"] * 0.999
-                        
-                active_shadows.append(trade)
-                
-            self.shadow_trades = active_shadows
-        except Exception as e:
-            logger.error(f"[SHADOW] Error managing shadow trades: {e}")
-            
-    def _log_shadow_pnl(self, trade: Dict[str, Any]):
-        try:
-            side = trade["side"]
-            entry = trade["entry_price"]
-            exit = trade["exit_price"]
-            
-            # Simple % pnl calculation, real logic uses actual sizes and fees
-            if side == "BUY":
-                pct = (exit - entry) / entry
-            else:
-                pct = (entry - exit) / entry
-                
-            trade["pnl_pct"] = pct
-            trade["exit_ts_utc"] = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-            
-            with open(self.shadow_pnl_ledger_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(trade) + "\n")
-        except Exception as e:
-            logger.error(f"[SHADOW] Error logging shadow pnl: {e}")
 
     def _manage_open_positions(self):
         symbols_to_close = []
@@ -2194,8 +2070,6 @@ class AutonomousMultiAssetTrader:
                     "mode": pos["mode"],
                     "duration_sec": int(duration)
                 }
-                if pos.get("signal_inverted"):
-                    trade_record["signal_inverted"] = True
                 if not self._record_closed_trade(trade_record):
                     # The ledger already holds every leg of this close; the
                     # history file is a secondary index. Loud, not silent —
@@ -2530,10 +2404,6 @@ class AutonomousMultiAssetTrader:
                 # Positions are created ONLY on real post-placement fills.
                 if self.pending_entries:
                     self._poll_pending_entries()
-                    
-                # 3. Manage Shadow Trades
-                if self.shadow_trades:
-                    self._manage_shadow_trades()
 
                 # 2c. Price-feed health: sustained total data failure means
                 # stops are being evaluated on stale/absent data. Alert once.
