@@ -26,6 +26,34 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
+# Deploy identifier (permanent rule, Sep 2026): every deployment gets a unique
+# ID surfaced on the dashboard, so a glance at the header confirms which code
+# is actually live. Resolved once at server startup from the git checkout the
+# server runs from: short SHA + commit timestamp. Falls back to "unknown" when
+# git is unavailable (never breaks the server).
+def _resolve_deploy_info():
+    try:
+        import subprocess
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        when = subprocess.run(
+            ["git", "log", "-1", "--format=%ci"],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if sha:
+            return {"id": sha, "at": when or "unknown", "subject": subject or ""}
+    except Exception:
+        pass
+    return {"id": "unknown", "at": "unknown", "subject": ""}
+
+DEPLOY_INFO = _resolve_deploy_info()
+
 # Load credentials from .env
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -1545,6 +1573,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         return {
             "bot": CURRENT_BOT_INFO,
             "telemetry": CACHED_TELEMETRY,
+            "deploy": DEPLOY_INFO,
             "server_time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         }
 

@@ -128,6 +128,26 @@ const state = {
 
 /* ---------------- header ---------------- */
 
+/* Deploy badge: one-time fetch of the live code version, so the header
+   always shows which deployment is actually running. */
+async function refreshDeployBadge() {
+  const el = document.getElementById("hdr-deploy");
+  try {
+    const s = await getJSON("/api/status");
+    const d = s && s.deploy;
+    if (d && d.id && d.id !== "unknown") {
+      el.textContent = d.id;
+      el.title = "live code: " + d.id + (d.at && d.at !== "unknown" ? " · " + d.at : "")
+        + (d.subject ? "\n" + d.subject : "");
+    } else {
+      el.textContent = "unknown";
+      el.title = "could not resolve live code version";
+    }
+  } catch (e) {
+    el.textContent = "unknown";
+  }
+}
+
 async function refreshHeader() {
   const s = await getJSON("/api/autotrade/status");
   if (!s) return;
@@ -1114,6 +1134,7 @@ async function refreshLogs() {
 
 async function initialLoad() {
   await refreshHeader();
+  await refreshDeployBadge();
   await refreshOverview();
   await refreshIntegrity();
   await refreshPositions();
