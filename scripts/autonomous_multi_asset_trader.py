@@ -1178,7 +1178,10 @@ class AutonomousMultiAssetTrader:
             tp2_pct = max(0.022, min(0.045, 4.5 * atr_ratio))
 
         # 1. High Velocity Trend Breakout (Sniper Hurdle)
-        if hurst >= 0.55 and robust_z >= 1.25 and mom_15m >= 0.35 and rsi_14 >= 52 and rvol >= 1.20:
+        # Sep-2026: eased per user request (was mom>=0.35, rvol>=1.20). The
+        # Sep 16-23 replay showed the looser pair is expectancy-neutral
+        # (92 -> 107 signals, +$15.12 -> +$15.72/trade, PF 1.30 -> 1.32).
+        if hurst >= 0.55 and robust_z >= 1.25 and mom_15m >= 0.15 and rsi_14 >= 52 and rvol >= 1.00:
             if macro_trend == "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_LONG", "macro_trend": macro_trend,
@@ -1251,7 +1254,7 @@ class AutonomousMultiAssetTrader:
             }
             return sig
 
-        elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.35 and rsi_14 <= 48 and rvol >= 1.20:
+        elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.15 and rsi_14 <= 48 and rvol >= 1.00:
             if macro_trend != "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_SHORT", "macro_trend": macro_trend,
