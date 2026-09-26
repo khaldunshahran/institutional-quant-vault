@@ -45,6 +45,17 @@ TAKER_FEE_RATE = 0.00045          # 0.045% taker
 FUNDING_RATE_PER_INTERVAL = 0.0001  # 0.01% per 8h funding interval (flat estimate)
 VOLUME_SHARE = 0.10              # back-of-queue: we capture 10% of volume at our level
 DEFAULT_MAKER_WAIT_SEC = 120     # resting entry orders expire after 120s
+# --- Filter-integrity bounds (Sep-2026 repair) ---
+# A poisoned exchange_info_cache.json entry (tick_size 0.1 cached for STXUSDT
+# while STX trades ~$0.34) once made place_maker_order() floor a 0.3476 SELL
+# limit to 0.30, falsely tripping the post-only cross check. Filters are
+# therefore validated for plausibility BEFORE they ever touch rounding:
+# a tick is sane only if positive and at most 1% of the reference price; a
+# step only if positive and one step represents at most $10k notional.
+# Implausible filters are treated as filters_unavailable (loud) — the
+# simulator NEVER silently rounds to a garbage grid.
+MAX_TICK_FRAC_OF_PRICE = 0.01
+MAX_STEP_NOTIONAL_USD = 10_000.0
 # Pullback-discount entry (Sep-2026 research, E2 variant): rest the post-only
 # entry limit 0.50 x ATR(14) off the signal price (below for LONG, above for
 # SHORT) and let it work up to 1h. The replay showed the edge needs BOTH the
@@ -88,6 +99,11 @@ class PaperFillSimulator:
         self._filters_mem: Dict[str, Dict[str, float]] = {}
         self._book_fetcher = book_fetcher or self._fetch_book
         self._trades_fetcher = trades_fetcher or self._fetch_trades
+        # True only when the caller did NOT inject a filters_fetcher: the one
+        # live exchangeInfo refetch on implausible/missing filters is allowed
+        # solely on the default path (injected fetchers are a deterministic
+        # test seam and must never trigger network I/O).
+        self._use_default_filters_fetcher = filters_fetcher is None
         self._filters_fetcher = filters_fetcher or self._fetch_filters
         # Working maker orders: order_id -> order state. Orders only ever
         # fill on market activity observed AFTER their placement timestamp.
@@ -136,36 +152,139 @@ class PaperFillSimulator:
         return out
 
     def _fetch_filters(self, symbol: str) -> Optional[Dict[str, float]]:
-        """tickSize / stepSize from exchangeInfo, cached 7 days."""
+        """tickSize / stepSize from exchangeInfo, cached 7 days.
+
+        Cache invariant: ONLY genuinely fetched, sane data is ever written.
+        Failures, degenerate payloads, and implausible values are never
+        cached — a failed fetch leaves the old entry (even if stale) untouched.
+        Plausibility against a live price is checked at USE time by
+        _validated_filters(), since the cache has no price context.
+        """
         if symbol in self._filters_mem:
             return self._filters_mem[symbol]
-        cached = {}
         try:
             if self.filters_cache_file.exists():
                 cached = json.loads(self.filters_cache_file.read_text(encoding="utf-8"))
-                entry = cached.get(symbol)
+                entry = cached.get(symbol) if isinstance(cached, dict) else None
                 if entry and (time.time() - entry.get("cached_at", 0)) < 7 * 86400:
                     self._filters_mem[symbol] = entry["filters"]
                     return entry["filters"]
         except Exception:
             pass
-        data = _http_get_json(f"{FAPI_BASE}/fapi/v1/exchangeInfo?symbol={symbol}")
+        # Cache miss: one live fetch (price-free sanity only; caches sane data).
+        return self._refetch_filters_live(symbol)
+
+    @staticmethod
+    def _parse_exchange_info(data: Any) -> Optional[Dict[str, float]]:
+        """Parse tick/step/min_notional from an exchangeInfo payload.
+
+        Returns None on ANY problem: network failure, unexpected shape, or
+        degenerate values (tick/step/min_notional must all be positive).
+        This is the price-free sanity gate — the price-aware plausibility
+        check happens at use time in _validated_filters().
+        """
         try:
             f = data["symbols"][0]["filters"]
-            tick = next(x["tickSize"] for x in f if x["filterType"] == "PRICE_FILTER")
-            step = next(x["stepSize"] for x in f if x["filterType"] == "LOT_SIZE")
-            min_notional = next((x.get("notional") or x.get("minNotional") for x in f if x["filterType"] == "MIN_NOTIONAL"), 5.0)
-            filters = {"tick_size": float(tick), "step_size": float(step), "min_notional": float(min_notional or 5.0)}
-        except Exception as e:
-            logger.warning(f"[FILL-SIM] exchangeInfo failed for {symbol}: {e}")
+            tick = float(next(x["tickSize"] for x in f if x["filterType"] == "PRICE_FILTER"))
+            step = float(next(x["stepSize"] for x in f if x["filterType"] == "LOT_SIZE"))
+            mn_raw = next((x.get("notional") or x.get("minNotional") for x in f
+                           if x["filterType"] == "MIN_NOTIONAL"), 5.0)
+            min_notional = float(mn_raw or 5.0)
+        except Exception:
+            return None
+        if tick <= 0 or step <= 0 or min_notional <= 0:
+            return None
+        return {"tick_size": tick, "step_size": step, "min_notional": min_notional}
+
+    def _refetch_filters_live(self, symbol: str,
+                              price: Optional[float] = None) -> Optional[Dict[str, float]]:
+        """ONE live exchangeInfo fetch for `symbol`, bypassing every cache.
+
+        Caches ONLY genuinely fetched data that passes sanity (price-aware
+        when `price` is given). Failures and implausible payloads are NEVER
+        written — the old cache entry is left untouched, never stamped with
+        a fresh timestamp as if it were real exchange data. A plausible
+        refetch overwrites a poisoned entry (self-healing).
+        """
+        data = _http_get_json(f"{FAPI_BASE}/fapi/v1/exchangeInfo?symbol={symbol}")
+        filters = self._parse_exchange_info(data)
+        if filters is None:
+            logger.warning(f"[FILL-SIM] live refetch failed for {symbol}: "
+                           f"no usable filters in exchangeInfo")
+            return None
+        if price is not None and not self._filters_plausible(filters, price):
+            logger.error(f"[FILL-SIM] live refetch for {symbol} returned implausible "
+                         f"filters {filters} at price {price}; NOT caching")
             return None
         self._filters_mem[symbol] = filters
         try:
+            cached: Dict[str, Any] = {}
+            if self.filters_cache_file.exists():
+                cached = json.loads(self.filters_cache_file.read_text(encoding="utf-8"))
+                if not isinstance(cached, dict):
+                    cached = {}
             cached[symbol] = {"cached_at": time.time(), "filters": filters}
             self.filters_cache_file.write_text(json.dumps(cached), encoding="utf-8")
         except Exception:
             pass
         return filters
+
+    @staticmethod
+    def _tick_plausible(tick_size: Any, price: Any) -> bool:
+        """A tick is sane iff positive and at most 1% of the reference price
+        (boundary inclusive: tick == 1% of price passes)."""
+        try:
+            tick = float(tick_size)
+            px = float(price)
+        except (TypeError, ValueError):
+            return False
+        return px > 0 and 0.0 < tick <= MAX_TICK_FRAC_OF_PRICE * px
+
+    @staticmethod
+    def _step_plausible(step_size: Any, price: Any) -> bool:
+        """A step is sane iff positive and one step is at most $10k notional."""
+        try:
+            step = float(step_size)
+            px = float(price)
+        except (TypeError, ValueError):
+            return False
+        return px > 0 and step > 0.0 and step * px <= MAX_STEP_NOTIONAL_USD
+
+    @classmethod
+    def _filters_plausible(cls, filters: Any, price: Any) -> bool:
+        """Full filter-set plausibility at a reference price."""
+        if not isinstance(filters, dict):
+            return False
+        try:
+            mn = filters.get("min_notional", 5.0)
+            min_notional = float(5.0 if mn is None else mn)
+        except (TypeError, ValueError):
+            return False
+        return (cls._tick_plausible(filters.get("tick_size"), price)
+                and cls._step_plausible(filters.get("step_size"), price)
+                and min_notional > 0.0)
+
+    def _validated_filters(self, symbol: str, price: float) -> Optional[Dict[str, float]]:
+        """Filters that passed plausibility at `price`, or None.
+
+        Never returns a garbage grid: if the (cached or injected) filters are
+        missing or implausible at this price, ONE live exchangeInfo refetch is
+        attempted (default fetcher only) before giving up. Callers treat None
+        as filters_unavailable — loud, never silent.
+        """
+        filters = self._filters_fetcher(symbol)
+        if self._filters_plausible(filters, price):
+            return filters
+        if filters is not None:
+            logger.error(f"[FILL-SIM] implausible filters for {symbol} at price {price}: "
+                         f"{filters} — refusing to round; attempting one live refetch")
+        if self._use_default_filters_fetcher:
+            live = self._refetch_filters_live(symbol, price)
+            if self._filters_plausible(live, price):
+                return live
+        logger.error(f"[FILL-SIM] filters_unavailable for {symbol} at price {price}: "
+                     f"no plausible tick/step")
+        return None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -204,10 +323,11 @@ class PaperFillSimulator:
         now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
         now_ms = int(time.time() * 1000)
 
-        filters = self._filters_fetcher(symbol)
+        filters = self._validated_filters(symbol, limit_price)
         if not filters:
             return self._rejected(symbol, side, quantity, limit_price,
-                                 "filters_unavailable: cannot size to exchange precision", now_utc)
+                                 f"filters_unavailable: cannot size to exchange precision "
+                                 f"(no plausible tick/step for {symbol} at {limit_price})", now_utc)
         tick, step = filters["tick_size"], filters["step_size"]
         limit_price = self._round_to_step(limit_price, tick)
         quantity = self._round_to_step(quantity, step)
@@ -438,6 +558,14 @@ class PaperFillSimulator:
                     "degraded": True, "timestamp_utc": now_utc}
 
         notional_est = quantity * mid
+        # Integrity gate: a poisoned tick (e.g. 0.1 cached for a $0.34 symbol)
+        # would silently falsify the fill price. Refuse the grid and fill
+        # unrounded (degraded) rather than corrupt the price. No live refetch
+        # here: protective exits stay fail-open and fast.
+        if tick and not self._tick_plausible(tick, mid):
+            logger.error(f"[FILL-SIM] implausible tick_size {tick} for {symbol} "
+                         f"at ~{mid}; skipping price rounding")
+            tick = 0.0
         # Slippage: cross half the spread + size impact (conservative).
         impact = spread * 0.10 * min(1.0, notional_est / 100_000.0)
         slip_mult = DEGRADED_TAKER_SLIPPAGE_MULT if degraded else 1.0
