@@ -61,7 +61,9 @@ class BinanceExecutionAdapter:
     def _read_ledger(self) -> Dict[str, Any]:
         try:
             if self.ledger_path.exists():
-                return json.loads(self.ledger_path.read_text(encoding="utf-8"))
+                data = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
         except Exception:
             pass
         return {"mode": self.mode, "starting_balance": 1000.0, "current_balance": 1000.0, "orders": []}
