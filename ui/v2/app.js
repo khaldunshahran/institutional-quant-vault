@@ -137,7 +137,8 @@ async function refreshDeployBadge() {
     const d = s && s.deploy;
     if (d && d.id && d.id !== "unknown") {
       el.textContent = d.id;
-      el.title = "live code: " + d.id + (d.at && d.at !== "unknown" ? " · " + d.at : "")
+      el.title = "full " + (d.full || d.id)
+        + (d.at && d.at !== "unknown" ? " · " + d.at : "")
         + (d.subject ? "\n" + d.subject : "");
     } else {
       el.textContent = "unknown";

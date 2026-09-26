@@ -29,28 +29,25 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 # Deploy identifier (permanent rule, Sep 2026): every deployment gets a unique
 # ID surfaced on the dashboard, so a glance at the header confirms which code
 # is actually live. Resolved once at server startup from the git checkout the
-# server runs from: short SHA + commit timestamp. Falls back to "unknown" when
-# git is unavailable (never breaks the server).
+# server runs from: short SHA + full SHA + commit timestamp + subject.
+# Falls back to "unknown" when git is unavailable (never breaks the server).
 def _resolve_deploy_info():
     try:
         import subprocess
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
-        when = subprocess.run(
-            ["git", "log", "-1", "--format=%ci"],
-            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
-        subject = subprocess.run(
-            ["git", "log", "-1", "--format=%s"],
-            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
+        def _git(*args):
+            return subprocess.run(
+                ["git", *args],
+                cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+        sha = _git("rev-parse", "--short", "HEAD")
         if sha:
-            return {"id": sha, "at": when or "unknown", "subject": subject or ""}
+            when = _git("log", "-1", "--format=%ci")
+            subject = _git("log", "-1", "--format=%s")
+            return {"id": sha, "full": _git("rev-parse", "HEAD") or "unknown",
+                    "at": when or "unknown", "subject": subject or ""}
     except Exception:
         pass
-    return {"id": "unknown", "at": "unknown", "subject": ""}
+    return {"id": "unknown", "full": "unknown", "at": "unknown", "subject": ""}
 
 DEPLOY_INFO = _resolve_deploy_info()
 
