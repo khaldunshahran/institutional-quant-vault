@@ -45,6 +45,13 @@ TAKER_FEE_RATE = 0.00045          # 0.045% taker
 FUNDING_RATE_PER_INTERVAL = 0.0001  # 0.01% per 8h funding interval (flat estimate)
 VOLUME_SHARE = 0.10              # back-of-queue: we capture 10% of volume at our level
 DEFAULT_MAKER_WAIT_SEC = 120     # resting entry orders expire after 120s
+# Pullback-discount entry (Sep-2026 research, E2 variant): rest the post-only
+# entry limit 0.50 x ATR(14) off the signal price (below for LONG, above for
+# SHORT) and let it work up to 1h. The replay showed the edge needs BOTH the
+# discount AND the patience: short windows made the discount variant worse
+# than baseline. Unfilled orders expire -> no trade (no chasing).
+ENTRY_DISCOUNT_ATR_MULT = 0.5
+ENTRY_MAKER_WAIT_SEC = 3600
 TP_WORKING_WAIT_SEC = 900        # TP limit orders work up to 15 min (abandoned earlier on failure)
 DEGRADED_TAKER_SLIPPAGE_MULT = 3.0  # slippage multiplier when book is unavailable
 

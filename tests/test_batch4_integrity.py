@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import scripts.autonomous_multi_asset_trader as trader_module
 from scripts.autonomous_multi_asset_trader import (
     AutonomousMultiAssetTrader,
     LedgerWriteError,
@@ -21,7 +22,11 @@ from test_risk_and_correlation import StubFillSimulator
 
 
 @pytest.fixture
-def b4_trader(tmp_path):
+def b4_trader(tmp_path, monkeypatch):
+    # Pin the entry discount to zero: batch-4 integrity tests use exact
+    # price expectations. Discount policy is covered in
+    # tests/test_entry_discount.py.
+    monkeypatch.setattr(trader_module, "ENTRY_DISCOUNT_ATR_MULT", 0.0)
     trader = AutonomousMultiAssetTrader(runtime_dir=str(tmp_path), auto_start=False)
     trader.telegram_bot = MagicMock()
     trader.episodic_memory = MagicMock()

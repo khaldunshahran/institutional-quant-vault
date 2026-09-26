@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import scripts.autonomous_multi_asset_trader as trader_module
 from scripts.autonomous_multi_asset_trader import AutonomousMultiAssetTrader
 from scripts.paper_fill_simulator import PaperFillSimulator, MAKER_FEE_RATE, TAKER_FEE_RATE
 from test_risk_and_correlation import StubFillSimulator
@@ -46,7 +47,11 @@ class PartialStubFillSimulator(StubFillSimulator):
 
 
 @pytest.fixture
-def ledger_trader(tmp_path):
+def ledger_trader(tmp_path, monkeypatch):
+    # Ledger tests pin the entry discount to zero: they verify booking
+    # mechanics with a controlled entry price. The discount policy itself
+    # is covered in tests/test_entry_discount.py.
+    monkeypatch.setattr(trader_module, "ENTRY_DISCOUNT_ATR_MULT", 0.0)
     trader = AutonomousMultiAssetTrader(runtime_dir=str(tmp_path))
     trader.positions_file = tmp_path / "autonomous_positions.json"
     trader.history_file = tmp_path / "autonomous_trade_history.json"

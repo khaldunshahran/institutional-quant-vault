@@ -1,6 +1,7 @@
 import time
 from unittest.mock import MagicMock
 import pytest
+import scripts.autonomous_multi_asset_trader as trader_module
 from scripts.autonomous_multi_asset_trader import AutonomousMultiAssetTrader
 from scripts.paper_fill_simulator import MAKER_FEE_RATE, TAKER_FEE_RATE
 
@@ -74,7 +75,11 @@ def open_and_fill(trader, sig):
 
 
 @pytest.fixture
-def isolated_trader(tmp_path):
+def isolated_trader(tmp_path, monkeypatch):
+    # Pin the entry discount to zero: risk tests use exact price
+    # expectations. Discount policy is covered in
+    # tests/test_entry_discount.py.
+    monkeypatch.setattr(trader_module, "ENTRY_DISCOUNT_ATR_MULT", 0.0)
     trader = AutonomousMultiAssetTrader(runtime_dir=str(tmp_path), auto_start=False)
     trader.positions_file = tmp_path / "autonomous_positions.json"
     trader.history_file = tmp_path / "autonomous_trade_history.json"

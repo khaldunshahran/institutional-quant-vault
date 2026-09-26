@@ -80,7 +80,7 @@ from scripts.economic_calendar_engine import EconomicCalendarEngine
 from scripts.session_clock_engine import SessionClockEngine
 from scripts.jev_decision_engine import JevDecisionEngine
 from scripts.math_quant_engine import compute_hurst_exponent, compute_robust_mad_zscore
-from scripts.paper_fill_simulator import PaperFillSimulator, TP_WORKING_WAIT_SEC, DEFAULT_MAKER_WAIT_SEC
+from scripts.paper_fill_simulator import PaperFillSimulator, TP_WORKING_WAIT_SEC, ENTRY_DISCOUNT_ATR_MULT, ENTRY_MAKER_WAIT_SEC
 
 
 class AutonomousMultiAssetTrader:
@@ -1512,8 +1512,17 @@ class AutonomousMultiAssetTrader:
         if qty <= 0:
             return
 
+        # Pullback-discount entry (Sep-2026 research, E2 variant): rest the
+        # post-only limit 0.50 x ATR(14) off the signal price instead of at
+        # the thrust extreme. The inversion flip (if any) already happened in
+        # _signal_side, so the discount follows the final side mechanically.
+        # Falls back to the signal price if ATR is unavailable.
+        atr_14 = float(signal.get("atr_14") or 0.0)
+        sgn = 1 if side == "BUY" else -1
+        limit_px = (price - sgn * ENTRY_DISCOUNT_ATR_MULT * atr_14
+                    if atr_14 > 0 else price)
         res = self.execution_adapter.fill_simulator.place_maker_order(
-            symbol, side, qty, price, max_wait_sec=DEFAULT_MAKER_WAIT_SEC)
+            symbol, side, qty, limit_px, max_wait_sec=ENTRY_MAKER_WAIT_SEC)
         if res.get("status") != "WORKING":
             # The post-only entry was rejected (would cross the touch, no
             # book, bad filters): no position, no silent fill. Logged for
@@ -1521,7 +1530,9 @@ class AutonomousMultiAssetTrader:
             self._log_decision(symbol, "REJECTED", "ENTRY_FILL_FAILED", {
                 "side": side,
                 "requested_qty": qty,
-                "limit_price": price,
+                "signal_price": price,
+                "limit_price": limit_px,
+                "entry_discount_atr": ENTRY_DISCOUNT_ATR_MULT,
                 "reason": res.get("reason"),
             })
             return
@@ -1533,6 +1544,8 @@ class AutonomousMultiAssetTrader:
             "order_id": res["order_id"],
             "signal": signal,
             "side": side,
+            "signal_price": price,
+            "entry_discount_atr": ENTRY_DISCOUNT_ATR_MULT,
             "limit_price": float(res["limit_price"]),
             "requested_qty": float(res["requested_qty"]),
             "filled_qty": 0.0,
@@ -1542,7 +1555,9 @@ class AutonomousMultiAssetTrader:
         self._save_pending_entries()
         self._log_decision(symbol, "PENDING", "ENTRY_WORKING", {
             "side": side,
+            "signal_price": price,
             "limit_price": float(res["limit_price"]),
+            "entry_discount_atr": ENTRY_DISCOUNT_ATR_MULT,
             "requested_qty": float(res["requested_qty"]),
             "order_id": res["order_id"],
         })
@@ -1712,6 +1727,10 @@ class AutonomousMultiAssetTrader:
             "jev_engine_mode": signal.get("jev_engine_mode", "unknown"),
             "mode": self.execution_adapter.mode.upper(),
             "unrealized_pnl_usd": 0.0,
+            # Paired-experiment stamp: propagate the inversion flag so the
+            # experiment record can attribute fills to the correct arm.
+            "signal_inverted": signal.get("signal_inverted", False),
+            "original_side": signal.get("original_side"),
             # Trade telemetry (per-trade history): peak/trough unrealized PnL
             # and a 5-minute mark trail, persisted into the closed trade
             # record. Telemetry-only — never influences entries or exits.
@@ -1749,6 +1768,8 @@ class AutonomousMultiAssetTrader:
         self._log_decision(symbol, "APPROVED", "SIGNAL_ACCEPTED", {
             "setup": position.get("setup"),
             "side": position.get("side"),
+            "signal_inverted": position.get("signal_inverted", False),
+            "original_side": position.get("original_side"),
             "entry_price": price,
             "fill_status": "FILLED",
             "entry_fee_usd": round(entry_fee_usd, 4),
