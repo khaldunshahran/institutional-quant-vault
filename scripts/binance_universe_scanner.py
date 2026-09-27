@@ -5,6 +5,8 @@ Covers:
 1. Institutional Metals: Gold (XAUUSDT Futures & PAXGUSDT Spot)
 2. Top 20 Binance Liquid Mega-Caps (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, SUI, LINK, etc.)
 3. Top 24H Volatility Movers (highest percentage breakouts)
+4. Broad-market sleeve (2026-09-27, user request): top USDT perpetuals by
+   24h quote volume — maximum breadth for paper testing, liquidity-screened.
 
 Uses ThreadPoolExecutor for sub-second parallel kline streaming.
 Pre-calculates Hurst exponents, Robust Z-scores, and Opportunity Scores.
@@ -46,6 +48,17 @@ TOP_50_SYMBOLS = [
     "SEIUSDT", "JUPUSDT", "AAVEUSDT", "LDOUSDT", "STXUSDT",
 ]
 
+# Broad-market sleeve (2026-09-27, user request "put everything in it"):
+# top USDT perpetuals by 24h quote volume, appended after the frozen core +
+# gainers sleeve. Liquidity-screened (>= $10M 24h quote volume); leveraged
+# tokens, gold and frozen-core members excluded. Membership follows the live
+# volume ranking, so it is effectively static (rankings move slowly) — no
+# rotation churn. CAVEAT: the Sep-2026 universe replay (round 3 v3, VALID)
+# showed dynamic volatile-asset expansion hurting expectancy (-$42.98/trade
+# vs -$7.01 baseline); breadth is for paper testing, not an edge claim.
+BROAD_SLEEVE_LIMIT = 40
+BROAD_MIN_VOLUME_USD = 10_000_000.0
+
 
 class BinanceUniverseScanner:
     def __init__(self, min_volume_usd: float = 50_000_000.0, cache_ttl_sec: float = 15.0, include_movers: bool = False):
@@ -57,6 +70,7 @@ class BinanceUniverseScanner:
         self.cached_by_symbol: Dict[str, Dict[str, Any]] = {}
         self.cached_gold: List[Dict[str, Any]] = []
         self.cached_movers: List[Dict[str, Any]] = []
+        self.cached_broad: List[Dict[str, Any]] = []
         self.is_scanning = False
 
         # Run initial scan immediately in background thread
@@ -203,6 +217,43 @@ class BinanceUniverseScanner:
         gainers.sort(key=lambda x: x["change_24h_pct"], reverse=True)
         return gainers[:limit]
 
+    def _select_broad(self, ticker_map, limit=BROAD_SLEEVE_LIMIT):
+        """Pure function: broad-market sleeve from a ticker map.
+
+        2026-09-27 (user request): maximum breadth for paper testing. Top
+        USDT perpetuals by 24h quote volume (>= $10M), excluding leveraged
+        tokens, gold, and every frozen-core member. Sorted by volume desc —
+        NO gainers-chasing (the Sep-2026 universe replay round 3 v3 showed
+        gainers-rotation at -$42.98/trade vs -$7.01 baseline; this sleeve
+        screens on liquidity only).
+        """
+        broad = []
+        for sym, t in ticker_map.items():
+            if not sym.endswith("USDT") or any(
+                    x in sym for x in ["UPUSDT", "DOWNUSDT", "BEARUSDT", "BULLUSDT"]):
+                continue
+            if sym in GOLD_SYMBOLS or sym in TOP_50_SYMBOLS:
+                continue
+            try:
+                vol = float(t.get("quoteVolume", 0.0))
+                price = float(t.get("lastPrice", 0.0))
+                if vol >= BROAD_MIN_VOLUME_USD and price > 0:
+                    broad.append({
+                        "symbol": sym,
+                        "base_asset": sym.replace("USDT", ""),
+                        "price": price,
+                        "change_24h_pct": round(float(t.get("priceChangePercent", 0.0)), 2),
+                        "volume_24h_usd": vol,
+                        "high_24h": float(t.get("highPrice", 0.0)),
+                        "low_24h": float(t.get("lowPrice", 0.0)),
+                        "tier": "BROAD_MKT",
+                        "asset_category": "CRYPTO_BROAD",
+                    })
+            except Exception:
+                continue
+        broad.sort(key=lambda x: x["volume_24h_usd"], reverse=True)
+        return broad[:limit]
+
     def _execute_scan(self):
         self.is_scanning = True
         tickers = self._fetch_24h_tickers()
@@ -260,6 +311,12 @@ class BinanceUniverseScanner:
         # _select_gainers for the rule and the Sep 20-21 post-mortem caveat.
         all_movers = self._select_gainers(ticker_map) if self.include_movers else []
         top_movers = all_movers  # _select_gainers already caps at 10
+
+        # 4. Broad-market sleeve (2026-09-27, user request): top USDT perps by
+        # 24h quote volume. Ticker-level only — the trader fetches its own
+        # klines, so these are NOT added to the scanner's kline prefetch
+        # (rate-limit budget: fapi klines cost weight 10 each).
+        self.cached_broad = self._select_broad(ticker_map)
 
         priority_candidates = gold_pairs + top_20_pairs + top_movers
 

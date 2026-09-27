@@ -51,6 +51,7 @@ import statistics
 import threading
 import urllib.request
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
@@ -157,11 +158,17 @@ class AutonomousMultiAssetTrader:
         self.execution_adapter = BinanceExecutionAdapter()
         self.telegram_bot = TelegramAlertBot()
         self.universe_scanner = BinanceUniverseScanner(include_movers=True)
-        # 2026-09-27 (user request): the 24h-top-gainers sleeve is ENABLED.
-        # See _get_hunting_watchlist: gainers are APPENDED to the frozen core,
+        # 2026-09-27 (user request): the 24h-top-gainers sleeve is ENABLED,
+        # plus the broad-market sleeve (top 40 USDT perps by 24h volume).
+        # See _get_hunting_watchlist: sleeves are APPENDED to the frozen core,
         # never replace it, so both paired arms keep the identical core
         # universe. Post-mortem caveat (Sep 20-21): volatile alts caused ~91%
-        # of historical losses; the $50M 24h-volume guard is the only screen.
+        # of historical losses; sleeves are liquidity-screened only ($50M for
+        # gainers, $10M for broad). The Sep-2026 universe replay (round 3 v3,
+        # VALID) showed gainers-rotation hurting expectancy (-$42.98/trade vs
+        # -$7.01 baseline) — breadth is for paper testing, not an edge claim.
+        # Hunting-loop kline fetches run in a thread pool (_fetch_watchlist_data)
+        # so an ~80-symbol watchlist can't stall stop management.
         self.episodic_memory = EpisodicMemoryEngine()
 
         # Institutional Quant Intelligence Engines
@@ -803,6 +810,8 @@ class AutonomousMultiAssetTrader:
             "universe_symbols": list(self._frozen_universe) if self.freeze_universe else [],
             "universe_gainers_sleeve": [m.get("symbol") for m in
                 getattr(self.universe_scanner, "cached_movers", [])],
+            "universe_broad_sleeve": [b.get("symbol") for b in
+                getattr(self.universe_scanner, "cached_broad", [])],
             "universe_watchlist": self._get_hunting_watchlist(),
             "mode_name": "INSTITUTIONAL_QUANT_VAULT_100K",
             "account_balance_usd": self.account_balance_usd,
@@ -2473,11 +2482,13 @@ class AutonomousMultiAssetTrader:
         """Symbols to scan for entries.
 
         Frozen core by default (reproducible experiment) PLUS the dynamic
-        24h-top-gainers sleeve (user request 2026-09-27). Gainers are appended
-        after the frozen core and rotate as the scanner refreshes (every
-        ~15s); they never replace core symbols, so the paired NORMAL/INVERTED
-        arms keep an identical core universe. Open positions are managed to
-        completion even if their symbol rotates out of the gainers list.
+        24h-top-gainers sleeve (user request 2026-09-27) PLUS the broad-market
+        sleeve (user request 2026-09-27: top 40 USDT perps by 24h volume).
+        Sleeves are appended after the frozen core in that order and never
+        replace core symbols, so the paired NORMAL/INVERTED arms keep an
+        identical core universe. Open positions are managed to completion
+        even if their symbol drops out of a sleeve. Duplicates are removed,
+        order preserved.
         Set freeze_universe=False to let the universe scanner rotate the
         whole watchlist from live scans.
         """
@@ -2489,10 +2500,41 @@ class AutonomousMultiAssetTrader:
             movers = [m["symbol"] for m in self.universe_scanner.cached_movers]
         except Exception:
             movers = []
-        for s in movers:
+        try:
+            broad = [b["symbol"] for b in self.universe_scanner.cached_broad]
+        except Exception:
+            broad = []
+        for s in movers + broad:
             if s not in base:
                 base.append(s)
         return base
+
+    def _fetch_watchlist_data(self, symbols: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Fetch 100x15m klines for every symbol in parallel (I/O-bound).
+
+        The hunting loop evaluates ~80 symbols per cycle; sequential fetches
+        would stall stop management for 15-30s per cycle. Fetching is pure
+        I/O with no shared state, so a thread pool is safe here — signal
+        evaluation itself stays single-threaded below. A failed fetch yields
+        None for that symbol (same graceful skip as before).
+        """
+        if not symbols:
+            return {}
+        results: Dict[str, Optional[Dict[str, Any]]] = {}
+        try:
+            with ThreadPoolExecutor(max_workers=10,
+                                    thread_name_prefix="HuntFetch") as ex:
+                fetched = list(ex.map(self._fetch_market_data, symbols))
+            results = dict(zip(symbols, fetched))
+        except Exception:
+            # Catastrophic pool failure: fall back to sequential so one bad
+            # symbol can never wedge the whole hunting cycle.
+            for s in symbols:
+                try:
+                    results[s] = self._fetch_market_data(s)
+                except Exception:
+                    results[s] = None
+        return results
 
     def _run_loop(self):
         print("[QUANT VAULT] 24/7 Background loop actively hunting setups across Gold & Top 20...")
@@ -2566,20 +2608,28 @@ class AutonomousMultiAssetTrader:
                     if (current_margin + 1000.0) <= self.max_daily_allocation_usd and committed < self.max_concurrent_positions:
                         watchlist = self._get_hunting_watchlist()
 
+                        # Cheap pre-filters first (no I/O): positions, pending
+                        # entries, cooldowns. Only survivors pay for klines.
+                        candidates = []
+                        now = time.time()
                         for symbol in watchlist:
                             if symbol in self.open_positions:
                                 continue
                             if symbol in self.pending_entries:
                                 continue  # entry working order already resting; no double exposure
-
-                            # Skip if in active cooldown
-                            if symbol in self.symbol_cooldowns:
-                                if time.time() < self.symbol_cooldowns[symbol]:
+                            cd = self.symbol_cooldowns.get(symbol)
+                            if cd is not None:
+                                if now < cd:
                                     continue
-                                else:
-                                    del self.symbol_cooldowns[symbol]
+                                del self.symbol_cooldowns[symbol]
+                            candidates.append(symbol)
 
-                            data = self._fetch_market_data(symbol)
+                        # Parallel kline fetch (~80 symbols/cycle would stall
+                        # stop management for 15-30s if done sequentially).
+                        data_map = self._fetch_watchlist_data(candidates)
+
+                        for symbol in candidates:
+                            data = data_map.get(symbol)
                             if not data:
                                 continue
 
