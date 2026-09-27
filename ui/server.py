@@ -1571,6 +1571,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "bot": CURRENT_BOT_INFO,
             "telemetry": CACHED_TELEMETRY,
             "deploy": DEPLOY_INFO,
+            "experiment": {
+                "invert_signals": bool(GLOBAL_AUTONOMOUS_TRADER and getattr(
+                    GLOBAL_AUTONOMOUS_TRADER, "invert_signals", False)),
+                "long_only": bool(GLOBAL_AUTONOMOUS_TRADER and getattr(
+                    GLOBAL_AUTONOMOUS_TRADER, "long_only", False)),
+            },
             "server_time": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         }
 

@@ -122,6 +122,13 @@ class AutonomousMultiAssetTrader:
         # original direction — we test "the engine's approved signals, flipped".
         # Paper-only; the hard LIVE lock is unaffected.
         self.invert_signals = os.environ.get("QV_INVERT_SIGNALS", "").strip().lower() in ("1", "true", "yes", "on")
+        # Long-only mode (Oct 2026): when QV_LONG_ONLY is truthy, SELL signals
+        # are dropped after the inversion flip (if any) is applied. NORMAL arm
+        # then trades only original LONGs; the INVERTED arm trades only
+        # original SHORTs (flipped to BUY) — the paired race contrast is
+        # preserved. Confirmed by H1/H3 replay rounds (Sep/Oct 2026).
+        # Paper-only; the hard LIVE lock is unaffected.
+        self.long_only = os.environ.get("QV_LONG_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
         # Frozen experiment universe: GOLD first, then TOP_50, de-duplicated.
         # Fixed for the life of the process so forward results are
         # reproducible and attributable to the signal, not to rotation.
@@ -1497,6 +1504,17 @@ class AutonomousMultiAssetTrader:
         symbol = signal["symbol"]
         side = signal["side"]
         price = signal["price"]
+
+        # Long-only filter (Oct 2026): applied AFTER the inversion flip in
+        # _signal_side, so the paired race keeps its contrast (inverted arm's
+        # BUYs are the original strategy's SHORTs).
+        if self.long_only and side != "BUY":
+            self._log_decision(symbol, "REJECTED", "LONG_ONLY_FILTER", {
+                "side": side,
+                "signal_inverted": self.invert_signals,
+                "setup": signal.get("setup"),
+            })
+            return
 
         # Directional Correlation Guard: Max 3 concurrent Crypto positions to prevent basket drawdown.
         # Pending (unfilled) entry orders count as commitments: without
