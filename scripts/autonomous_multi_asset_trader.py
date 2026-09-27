@@ -156,7 +156,12 @@ class AutonomousMultiAssetTrader:
 
         self.execution_adapter = BinanceExecutionAdapter()
         self.telegram_bot = TelegramAlertBot()
-        self.universe_scanner = BinanceUniverseScanner(include_movers=False)
+        self.universe_scanner = BinanceUniverseScanner(include_movers=True)
+        # 2026-09-27 (user request): the 24h-top-gainers sleeve is ENABLED.
+        # See _get_hunting_watchlist: gainers are APPENDED to the frozen core,
+        # never replace it, so both paired arms keep the identical core
+        # universe. Post-mortem caveat (Sep 20-21): volatile alts caused ~91%
+        # of historical losses; the $50M 24h-volume guard is the only screen.
         self.episodic_memory = EpisodicMemoryEngine()
 
         # Institutional Quant Intelligence Engines
@@ -796,6 +801,9 @@ class AutonomousMultiAssetTrader:
             "history_write_failures": int(getattr(self, "history_write_failures", 0)),
             "universe_frozen": bool(self.freeze_universe),
             "universe_symbols": list(self._frozen_universe) if self.freeze_universe else [],
+            "universe_gainers_sleeve": [m.get("symbol") for m in
+                getattr(self.universe_scanner, "cached_movers", [])],
+            "universe_watchlist": self._get_hunting_watchlist(),
             "mode_name": "INSTITUTIONAL_QUANT_VAULT_100K",
             "account_balance_usd": self.account_balance_usd,
             "balance_usd": self.account_balance_usd,
@@ -2462,12 +2470,29 @@ class AutonomousMultiAssetTrader:
         return {"success": True, "trade": rec, "history_persisted": history_persisted}
 
     def _get_hunting_watchlist(self) -> List[str]:
-        """Symbols to scan for entries. Frozen by default (reproducible
-        experiment); set freeze_universe=False to let the universe scanner
-        rotate the watchlist from live scans."""
+        """Symbols to scan for entries.
+
+        Frozen core by default (reproducible experiment) PLUS the dynamic
+        24h-top-gainers sleeve (user request 2026-09-27). Gainers are appended
+        after the frozen core and rotate as the scanner refreshes (every
+        ~15s); they never replace core symbols, so the paired NORMAL/INVERTED
+        arms keep an identical core universe. Open positions are managed to
+        completion even if their symbol rotates out of the gainers list.
+        Set freeze_universe=False to let the universe scanner rotate the
+        whole watchlist from live scans.
+        """
         if self.freeze_universe:
-            return list(self._frozen_universe)
-        return self.universe_scanner.get_hunting_watchlist()
+            base = list(self._frozen_universe)
+        else:
+            base = self.universe_scanner.get_hunting_watchlist()
+        try:
+            movers = [m["symbol"] for m in self.universe_scanner.cached_movers]
+        except Exception:
+            movers = []
+        for s in movers:
+            if s not in base:
+                base.append(s)
+        return base
 
     def _run_loop(self):
         print("[QUANT VAULT] 24/7 Background loop actively hunting setups across Gold & Top 20...")

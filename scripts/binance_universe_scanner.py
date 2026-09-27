@@ -165,6 +165,44 @@ class BinanceUniverseScanner:
         except Exception:
             return 0.50
 
+    def _select_gainers(self, ticker_map, limit=10):
+        """Pure function: top-24h gainers sleeve from a ticker map.
+
+        2026-09-27 (user request): the live arms append each day's top-24h
+        gainers. Gainers only (chg >= +5%), NOT absolute movers. Guards: 24h
+        quote volume >= $50M, leveraged tokens / gold / TOP_20 excluded.
+        NOTE Sep 20-21 post-mortem: volatile low-caps caused ~91% of
+        historical losses — this sleeve re-admits that asset class; the $50M
+        volume guard is the only screen. Watch paper results.
+        """
+        gainers = []
+        for sym, t in ticker_map.items():
+            if not sym.endswith("USDT") or any(
+                    x in sym for x in ["UPUSDT", "DOWNUSDT", "BEARUSDT", "BULLUSDT"]):
+                continue
+            if sym in GOLD_SYMBOLS or sym in TOP_20_SYMBOLS:
+                continue
+            try:
+                vol = float(t.get("quoteVolume", 0.0))
+                chg = float(t.get("priceChangePercent", 0.0))
+                price = float(t.get("lastPrice", 0.0))
+                if vol >= self.min_volume_usd and chg >= 5.0 and price > 0:
+                    gainers.append({
+                        "symbol": sym,
+                        "base_asset": sym.replace("USDT", ""),
+                        "price": price,
+                        "change_24h_pct": round(chg, 2),
+                        "volume_24h_usd": vol,
+                        "high_24h": float(t.get("highPrice", 0.0)),
+                        "low_24h": float(t.get("lowPrice", 0.0)),
+                        "tier": "24H_GAINER",
+                        "asset_category": "MOMENTUM_GAINER",
+                    })
+            except Exception:
+                continue
+        gainers.sort(key=lambda x: x["change_24h_pct"], reverse=True)
+        return gainers[:limit]
+
     def _execute_scan(self):
         self.is_scanning = True
         tickers = self._fetch_24h_tickers()
@@ -218,35 +256,10 @@ class BinanceUniverseScanner:
                 except Exception:
                     pass
 
-        # 3. Dynamic 24h Movers (Only if include_movers=True; disabled for Institutional Focus)
-        all_movers = []
-        if self.include_movers:
-            for sym, t in ticker_map.items():
-                if not sym.endswith("USDT") or any(x in sym for x in ["UPUSDT", "DOWNUSDT", "BEARUSDT", "BULLUSDT"]):
-                    continue
-                if sym in GOLD_SYMBOLS or sym in TOP_20_SYMBOLS:
-                    continue
-                try:
-                    vol = float(t.get("quoteVolume", 0.0))
-                    chg = float(t.get("priceChangePercent", 0.0))
-                    price = float(t.get("lastPrice", 0.0))
-                    if vol >= self.min_volume_usd and abs(chg) >= 5.0 and price > 0:
-                        all_movers.append({
-                            "symbol": sym,
-                            "base_asset": sym.replace("USDT", ""),
-                            "price": price,
-                            "change_24h_pct": round(chg, 2),
-                            "volume_24h_usd": vol,
-                            "high_24h": float(t.get("highPrice", 0.0)),
-                            "low_24h": float(t.get("lowPrice", 0.0)),
-                            "tier": "24H_MOVER",
-                            "asset_category": "MOMENTUM_MOVER"
-                        })
-                except Exception:
-                    continue
-
-            all_movers.sort(key=lambda x: abs(x["change_24h_pct"]), reverse=True)
-        top_movers = all_movers[:10] if self.include_movers else []
+        # 3. Dynamic 24h Top GAINERS (only if include_movers=True) — see
+        # _select_gainers for the rule and the Sep 20-21 post-mortem caveat.
+        all_movers = self._select_gainers(ticker_map) if self.include_movers else []
+        top_movers = all_movers  # _select_gainers already caps at 10
 
         priority_candidates = gold_pairs + top_20_pairs + top_movers
 
@@ -321,7 +334,7 @@ class BinanceUniverseScanner:
         self.cached_universe = processed
         self.cached_by_symbol = {item["symbol"]: item for item in processed}
         self.cached_gold = [p for p in processed if p["tier"] == "GOLD"]
-        self.cached_movers = [p for p in processed if p["tier"] == "24H_MOVER"]
+        self.cached_movers = [p for p in processed if p["tier"] == "24H_GAINER"]
         self.last_scan_time = time.time()
         self.is_scanning = False
 
@@ -351,7 +364,7 @@ class BinanceUniverseScanner:
 
         # Then top opportunity ranked assets from permitted universe
         for p in self.cached_universe:
-            if not self.include_movers and p.get("tier") == "24H_MOVER":
+            if not self.include_movers and p.get("tier") == "24H_GAINER":
                 continue
             sym = p["symbol"]
             if sym not in symbols:
