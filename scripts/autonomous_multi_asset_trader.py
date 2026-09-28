@@ -1205,7 +1205,11 @@ class AutonomousMultiAssetTrader:
         # Sep-2026: eased per user request (was mom>=0.35, rvol>=1.20). The
         # Sep 16-23 replay showed the looser pair is expectancy-neutral
         # (92 -> 107 signals, +$15.12 -> +$15.72/trade, PF 1.30 -> 1.32).
-        if hurst >= 0.55 and robust_z >= 1.25 and mom_15m >= 0.15 and rsi_14 >= 52 and rvol >= 1.00:
+        # Sep 29: mom eased further to 0.05 (variant B, user-approved). The
+        # gate-loosening replay (Sep 1-8, Sep 9-16, Sep 19-26 windows) showed
+        # mom>=0.05 beating control on both OOS windows
+        # (W1 +$11.13 vs +$7.65/trade, W2 +$16.23 vs +$15.33/trade).
+        if hurst >= 0.55 and robust_z >= 1.25 and mom_15m >= 0.05 and rsi_14 >= 52 and rvol >= 1.00:
             if macro_trend == "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_LONG", "macro_trend": macro_trend,
@@ -1278,7 +1282,7 @@ class AutonomousMultiAssetTrader:
             }
             return sig
 
-        elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.15 and rsi_14 <= 48 and rvol >= 1.00:
+        elif hurst >= 0.55 and robust_z <= -1.25 and mom_15m <= -0.05 and rsi_14 <= 48 and rvol >= 1.00:
             if macro_trend != "BEARISH":
                 return self._skip_eval(symbol, "REJECTED", "MACRO_FILTER", {
                     "setup": "SNIPER_SHORT", "macro_trend": macro_trend,
